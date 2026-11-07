@@ -4,7 +4,7 @@
 
 A Chrome extension records a browser meeting beside a Trello board. Gemini turns it into evidence-linked user stories, checked against INVEST. A human reviews them, then approves them into Trello. A web app tracks meeting history and backlog quality.
 
-**Status:** hackathon concept. This repo is design and file layout only, with no code yet.
+**Status:** hackathon concept.
 
 Full design: [docs/DESIGN.md](docs/DESIGN.md)
 AI usage disclosure (hackathon requirement): [docs/AI_USAGE.md](docs/AI_USAGE.md)

@@ -1,6 +1,6 @@
 # Meeting-to-Backlog: Design
 
-Hackathon project, Nov 2026.
+HACK.COMS hackathon project, Nov 2026.
 
 ## Idea
 
@@ -12,7 +12,7 @@ A Chrome extension records a browser meeting next to a Trello board. A backend u
 
 ## Flow
 
-1. Connect Trello (OAuth).
+1. Connect Trello/Jira/GitHub (OAuth).
 2. Start recording from the extension (explicit click, consent reminder, visible indicator).
 3. Stop. The extension uploads tab and mic audio to the API.
 4. A worker runs: transcribe, extract candidates, draft stories, INVEST critique.
@@ -22,7 +22,7 @@ A Chrome extension records a browser meeting next to a Trello board. A backend u
 
 **Story states:** Draft → (Needs changes) → Accepted → Imported, or Rejected (restorable).
 
-**Confidence vs quality** are separate. Confidence is how well the story is grounded in the meeting. Quality is how it scores against INVEST. Store and show them separately.
+**Confidence vs quality** are separate. Confidence is how well the story is grounded in the meeting and the AI worker's confidence in its own accuracy. Quality is how the story scores against INVEST. Store and show them separately.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ A Chrome extension records a browser meeting next to a Trello board. A backend u
 | API + worker | FastAPI (Python)                      |
 | Model        | Gemini API                            |
 | DB           | PostgreSQL + Tiger Data / TimescaleDB |
-| Boards       | Trello (MVP), GitHub Issues (stretch) |
+| Boards       | Trello (MVP), GitHub/Jira (stretch)   |
 | Deploy       | Docker Compose                        |
 
 ```
@@ -48,7 +48,7 @@ Rules: media lives in object storage or a local volume (not Postgres). Processin
 
 **Extension tabs:**
 
-- **Record:** pick Meet/Teams/Zoom, start/stop, consent note, recent meetings, auto-import toggle.
+- **Record:** start/stop, consent note, recent meetings, auto-import toggle.
 - **Drafts:** story list with confidence badges. Detail shows the story, acceptance criteria, priority, points, INVEST check, "jump to moment", AI critique, open questions, and the four actions.
 - **Analytics:** board health, counts, stories needing attention, and an "Open Full Analytics" button.
 - **Settings:** creativity level, model, auto-import threshold and target list, consent reminder, Trello connection.
@@ -110,14 +110,14 @@ Import is manual by default. Auto-import is opt-in, goes only to Triage with an 
 ## MVP plan
 
 1. **Foundation:** extension shell, FastAPI, Postgres schema, Docker Compose, Trello connect.
-2. **Recording:** tab + mic capture, upload, status.
-3. **AI slice:** one meeting → transcript → 3 grounded stories → INVEST critiques.
-4. **Review + import:** the four actions, then import one story to Trello with duplicate protection.
+2. **Recording:** mic capture, upload, status.
+3. **AI slice:** one meeting → transcript → 1 or more grounded stories → INVEST critiques.
+4. **Review + import:** the four actions, then import stories to Trello with duplicate protection.
 5. **Web app:** meeting history, one board overview, simple metrics.
 
 **Fallback:** if live capture is flaky, upload a pre-recorded meeting instead.
 
-**Stretch:** live draft previews, GitHub/Jira adapters, semantic duplicate detection, slide/frame analysis, other model providers, speaker heatmaps.
+**Stretch:** live draft previews, GitHub/Jira adapters, semantic duplicate detection, slide/frame analysis.
 
 ## 90-second demo
 
