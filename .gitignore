@@ -427,12 +427,13 @@ FodyWeavers.xsd
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
 
-# --- Meeting-to-Backlog additions ---
+# --- Backlogger additions ---
 .env
 .env.*
 !.env.example
 .wxt/
 .output/
-media/
+media/*
+!media/README.md
 *.webm
 *.wav
