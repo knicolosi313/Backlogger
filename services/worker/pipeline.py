@@ -10,34 +10,42 @@ Each pass returns JSON that matches a Pydantic model, so Gemini's output is
 validated automatically (response.parsed gives you the model object).
 """
 
+import json
+import time
+from collections.abc import Callable
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel
+from sqlmodel import Session
+
+from services.db import get_engine
+from services.models import Meeting, PipelineOutput
+
 from .objects import CritiqueResult, ExtractionResult, Transcript
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
 from .prompts.extract import EXTRACT_SYSTEM_PROMPT
 from .prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
 
-# =============================================================================
-# RUNNING THE PIPELINE
-# =============================================================================
-
-def run_pipeline(audio_path: str, model: str = "gemini-3.1-flash-lite"):
-    """Example of chaining the three passes. Swap the model name for whichever
-    Gemini model your team is using."""
-    import json
-    import time
+def _run_pipeline(
+    audio_path: str,
+    model: str,
+    save_stage: Callable[[str, BaseModel], None] | None = None,
+):
+    """Run Gemini and optionally save each result before starting the next pass."""
     from google import genai
     from google.genai import types
 
     client = genai.Client()
 
     # Upload the audio and wait until Gemini has finished processing it
-    file = client.files.upload(file=audio_path)
-    while file.state.name == "PROCESSING":
+    audio_file = client.files.upload(file=audio_path)
+    while audio_file.state.name == "PROCESSING":
         time.sleep(2)
-        file = client.files.get(name=file.name)
-    if file.state.name == "FAILED":
+        audio_file = client.files.get(name=audio_file.name)
+    if audio_file.state.name == "FAILED":
         raise RuntimeError("Gemini could not process the audio file")
 
-    def call(system_prompt, contents, schema):
+    def generate_result(system_prompt, contents, schema):
         response = client.models.generate_content(
             model=model,
             contents=contents,
@@ -51,27 +59,90 @@ def run_pipeline(audio_path: str, model: str = "gemini-3.1-flash-lite"):
         return response.parsed
 
     # Pass 1: audio -> transcript
-    transcript: Transcript = call(
+    transcript: Transcript = generate_result(
         TRANSCRIBE_SYSTEM_PROMPT,
-        [file, "Transcribe this meeting."],
+        [audio_file, "Transcribe this meeting."],
         Transcript,
     )
+    if save_stage is not None:
+        save_stage("transcribe", transcript)
     transcript_json = transcript.model_dump_json()
 
     # Pass 2: transcript -> stories
-    extraction: ExtractionResult = call(
+    extraction: ExtractionResult = generate_result(
         EXTRACT_SYSTEM_PROMPT,
         f"Meeting transcript:\n{transcript_json}",
         ExtractionResult,
     )
+    if save_stage is not None:
+        save_stage("extract", extraction)
 
     # Pass 3: stories + transcript -> reviews
-    indexed = [{"index": i, **s.model_dump()} for i, s in enumerate(extraction.stories)]
-    critique: CritiqueResult = call(
+    stories_with_indexes = [
+        {"index": index, **story.model_dump()}
+        for index, story in enumerate(extraction.stories)
+    ]
+    critique: CritiqueResult = generate_result(
         CRITIQUE_SYSTEM_PROMPT,
         f"Meeting transcript:\n{transcript_json}\n\n"
-        f"Draft stories:\n{json.dumps(indexed)}",
+        f"Draft stories:\n{json.dumps(stories_with_indexes)}",
         CritiqueResult,
     )
+    if save_stage is not None:
+        save_stage("critique", critique)
 
     return transcript, extraction, critique
+
+
+def run_pipeline(
+    audio_path: str,
+    model: str = "gemini-3.1-flash-lite",
+    *,
+    meeting_id: UUID | None = None,
+):
+    """Run Gemini; optionally checkpoint each stage for an existing meeting.
+
+    With meeting_id, stages commit independently so later failures preserve earlier
+    results. This saves raw outputs; creating reviewable Story rows is a separate
+    application operation. Without meeting_id, no database connection is opened.
+    """
+    if meeting_id is None:
+        return _run_pipeline(audio_path, model)
+
+    engine = get_engine()
+    run_id = uuid4()
+
+    def set_status(status: str) -> None:
+        """Save the meeting's status in its own transaction."""
+        with Session(engine) as session:
+            meeting = session.get(Meeting, meeting_id)
+            if meeting is None:
+                raise ValueError("Meeting does not exist")
+            meeting.status = status
+            session.commit()
+
+    def save_stage(stage: str, output: BaseModel) -> None:
+        """Commit this result now so a later failure won't lose it."""
+        stage_output = PipelineOutput(
+            meeting_id=meeting_id,
+            run_id=run_id,
+            stage=stage,
+            model=model,
+            output=output.model_dump(mode="json"),
+        )
+        with Session(engine) as session:
+            session.add(stage_output)
+            session.commit()
+
+    set_status("processing")
+    try:
+        result = _run_pipeline(audio_path, model, save_stage)
+        set_status("completed")
+    except Exception:
+        # Preserve the original processing error if recording failure also fails.
+        try:
+            set_status("failed")
+        except Exception:
+            pass
+        raise
+    return result

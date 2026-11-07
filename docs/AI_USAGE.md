@@ -2,11 +2,30 @@
 
 Per hackathon rules, this file lists AI-generated **code** and **documentation**. Add a row whenever more is generated.
 
-**Tool:** Claude Code (Claude Sonnet 5.5)
+**Tools:** Claude Code (Claude Sonnet 5.5, as recorded for the initial work) and OpenAI Codex (exact model variant not recorded).
 
-| Date | Type | Files | Notes |
-|---|---|---|---|
-| 2026-11-07 | Documentation | `README.md`, `docs/DESIGN.md`, `docs/AI_USAGE.md`, folder `README.md` files | Condensed from the team's own design brief (PDF) |
-| 2026-11-07 | Config | `.env.example`, `.gitignore` additions | Example keys only, no secrets |
 
-No AI-generated application code yet.
+| Date       | Tool         | Type                      | Files                                                                                                                                                                                                         | Notes                                                                                                                                                                                                                                                               |
+| ------------ | -------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-11-07 | Claude Code  | Documentation             | `README.md`, `docs/DESIGN.md`, `docs/AI_USAGE.md`, folder `README.md` files                                                                                                                                   | Condensed from the team's own design brief (PDF)                                                                                                                                                                                                                    |
+| 2026-11-07 | Claude Code  | Config                    | `.env.example`, `.gitignore` additions                                                                                                                                                                        | Example keys only, no secrets                                                                                                                                                                                                                                       |
+| 2026-11-07 | OpenAI Codex | Database models           | `services/models.py`                                                                                                                                                                                          | Generated SQLModel mappings for the eight existing tables, including UUIDs, timestamps, foreign keys, JSONB fields, uniqueness, and the analytics composite primary key. Existing Gemini output models in `services/worker/objects.py` were retained.               |
+| 2026-11-07 | OpenAI Codex | Database schema and setup | `infra/db/001_initial.sql`, `infra/db/setup.ps1`                                                                                                                                                              | Generated the initial PostgreSQL schema, constraints, indexes, migration record, and TimescaleDB analytics hypertable. Generated and refined the PowerShell connection-check and schema-application script. The migration was applied to the development database.  |
+| 2026-11-07 | OpenAI Codex | Database integration      | `services/db.py`, `services/__init__.py`                                                                                                                                                                      | Added database functions. Refactored database code for readability.                                                                                                                                                                                                |
+| 2026-11-07 | OpenAI Codex | Tests                     | `tests/conftest.py`, `tests/test_database.py`, `tests/test_database_constraints.py`, `tests/test_db_configuration.py`, `tests/test_pipeline.py`, `tests/test_setup_script.py`, `tests/test_worker_objects.py` | Generated synthetic fixtures and tests for model validation, Gemini orchestration and failures, database configuration and sessions, API health responses, SQLModel mappings, JSONB storage, database constraints, pipeline checkpoints, and setup-script behavior. |
+| 2026-11-07 | OpenAI Codex | Config and dependencies   | `pytest.ini`, `requirements.txt`, `requirements-dev.txt`, `.env.example`, `.gitignore` additions                                                                                                              | Added backend/test dependencies, test discovery settings, database setup guidance, and ignores for local environments and test caches.                                                                                                                              |
+| 2026-11-07 | OpenAI Codex | Documentation             | `README.md`, `infra/db/README.md`, `tests/README.md`, `docs/AI_USAGE.md`                                                                                                                                      | Documented SQLModel access, setup commands, pipeline persistence, test commands, implemented scope, and AI contributions.                                                                                                                                           |
+
+## Validation and current scope
+
+On 2026-11-07, all 51 tests passed across the offline and development-database
+runs: 39 offline tests and 12 PostgreSQL integration tests. Database tests use
+synthetic records inside transactions that roll back. Gemini clients and the
+setup script's psql command are replaced with fakes in the relevant tests; no
+tests call Gemini or Trello or process real meeting recordings.
+
+The pipeline saves raw stage outputs and updates meeting status when supplied
+with an existing `meeting_id`. It does not yet create story, revision, import,
+or analytics rows automatically. The schema includes storage for those features,
+but their end-to-end workflows are not implemented. Tests do not establish the
+quality of actual Gemini-generated stories or validate unimplemented app flows.

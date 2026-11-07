@@ -1,0 +1,56 @@
+"""Shared synthetic data and opt-in database access."""
+
+import os
+
+import pytest
+
+from services.db import get_engine
+from services.worker.objects import CritiqueResult, ExtractionResult, Transcript
+
+
+@pytest.fixture
+def pipeline_results():
+    transcript = Transcript.model_validate({
+        "language": "en",
+        "segments": [{
+            "speaker": "Alex", "start_s": 2.0, "end_s": 5.0,
+            "text": "Members should be able to reset their password by email.",
+        }],
+    })
+    extraction = ExtractionResult.model_validate({
+        "stories": [{
+            "title": "Reset a password",
+            "as_a": "member",
+            "i_want": "to reset my password by email",
+            "so_that": "I can access my account",
+            "acceptance_criteria": ["A member can request a reset email"],
+            "priority": "high",
+            "needs_clarification": False,
+            "source": {
+                "quote": transcript.segments[0].text,
+                "speaker": "Alex", "start_s": 2.0, "end_s": 5.0,
+            },
+        }],
+        "open_questions": [{"question": "How long should the reset link last?"}],
+    })
+    critique = CritiqueResult.model_validate({
+        "reviews": [{
+            "index": 0, "invest_score": 5, "confidence": 0.9,
+            "flags": [{"criterion": "Testable", "issue": "Link expiration is unspecified"}],
+            "recommend_split": False, "recommend_reject": False,
+        }],
+    })
+    return transcript, extraction, critique
+
+
+@pytest.fixture
+def database_connection():
+    if os.getenv("RUN_DATABASE_TESTS") != "1":
+        pytest.skip("Set RUN_DATABASE_TESTS=1 to test the migrated PostgreSQL database")
+
+    with get_engine().connect() as connection:
+        transaction = connection.begin()
+        try:
+            yield connection
+        finally:
+            transaction.rollback()

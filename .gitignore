@@ -428,6 +428,8 @@ FodyWeavers.xsd
 #*.lscache
 
 # --- Backlogger additions ---
+.venv/
+.pytest_cache/
 .env
 .env.*
 !.env.example

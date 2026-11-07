@@ -9,6 +9,24 @@ A Chrome extension records a browser meeting beside a Trello board. Gemini turns
 Full design: [docs/DESIGN.md](docs/DESIGN.md)
 AI usage disclosure (hackathon requirement): [docs/AI_USAGE.md](docs/AI_USAGE.md)
 
+Database setup: [infra/db/README.md](infra/db/README.md)
+
+## Backend development
+
+The Python backend uses SQLModel with Psycopg 3 to access TigerData. Copy
+`.env.example` to `.env` and set `DATABASE_URL` and `GEMINI_API_KEY`, then run:
+
+```powershell
+uv venv --python 3.13 .venv
+uv pip install --python .venv/Scripts/python.exe -r requirements-dev.txt
+./.venv/Scripts/python.exe -m uvicorn services.api.server:app --reload
+```
+
+Check database connectivity at `http://127.0.0.1:8000/health/db`. SQLModel table
+mappings are in `services/models.py`; session handling is in `services/db.py`.
+Apply the SQL migrations before using the API. See the database setup guide for
+queries, pipeline checkpoints, and test commands.
+
 ## Layout
 
 ```
