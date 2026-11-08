@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator, model_validator
 
 from services.worker.objects import DraftStory, StoryReview
 from services.worker.prompts.extract import CreativityLevel
@@ -61,8 +61,38 @@ class ProcessAccepted(BaseModel):
     status_url: str
 
 
+class AutoImportOptions(RequestBody):
+    confidence_threshold: float = Field(default=0.85, ge=0.5, le=1)
+    list_id: str | None = Field(default=None, min_length=1, max_length=255)
+    issue_type_id: str | None = Field(default=None, pattern=r"^[0-9]+$")
+    additional_fields: dict[str, Any] = Field(default_factory=dict)
+    evidence_base_url: HttpUrl
+
+    @model_validator(mode="after")
+    def validate_destination(self):
+        if bool(self.list_id) == bool(self.issue_type_id):
+            raise ValueError("Choose exactly one Trello list or Jira issue type")
+        if {"project", "issuetype", "summary", "description", "labels"}.intersection(self.additional_fields):
+            raise ValueError("Additional fields cannot replace core export fields")
+        if self.evidence_base_url.username or self.evidence_base_url.password or self.evidence_base_url.query or self.evidence_base_url.fragment:
+            raise ValueError("Evidence base URL must not include credentials, a query, or a fragment")
+        return self
+
+
+class AutoImportStatus(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    meeting_id: UUID
+    status: Literal["pending", "running", "completed", "failed"]
+    imported: int
+    skipped: int
+    failed: int
+    error: str | None
+    updated_at: datetime
+
+
 class ProcessOptions(RequestBody):
     creativity: CreativityLevel | None = None
+    auto_import: AutoImportOptions | None = None
 
 
 class StoryEdit(RequestBody):

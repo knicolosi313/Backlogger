@@ -30,7 +30,7 @@ def embeddings_enabled() -> bool:
 
 def content_text(payload: dict) -> str:
     """Keep the useful story fields; omit timestamps, scores, and source quotes."""
-    fields = ("title", "epic", "as_a", "i_want", "so_that", "acceptance_criteria", "solution_tasks", "description")
+    fields = ("title", "origin", "assumptions", "epic", "as_a", "i_want", "so_that", "acceptance_criteria", "solution_tasks", "description")
     return json.dumps({key: payload[key] for key in fields if payload.get(key)}, ensure_ascii=False)[:6000]
 
 
@@ -83,7 +83,8 @@ def index_stories(session: Session, board_id: UUID, stories: list[Story]) -> Non
     session.commit()
 
 
-def build_board_context(session: Session, meeting_id: UUID, transcript) -> dict:
+def load_board_candidates(session: Session, meeting_id: UUID):
+    """Read current board-scoped text and its cache for either retrieval pass."""
     meeting = session.get(Meeting, meeting_id)
     board = session.get(Board, meeting.board_id)
     # Read current drafts, rather than trusting a potentially stale cache payload.
@@ -101,6 +102,37 @@ def build_board_context(session: Session, meeting_id: UUID, transcript) -> dict:
     external = sorted((row for row in cached if row.source != "local"), key=lambda row: row.external_id)
     candidates.extend({"source": row.source, "id": row.external_id, "status": row.payload.get("status"), "draft": row.payload}
                       for row in external[:MAX_CANDIDATES])
+    limited = len(stories) > MAX_CANDIDATES or len(external) > MAX_CANDIDATES
+    return board, candidates, cache, limited
+
+
+def embed_with_candidates(session, board, candidates, cache, queries):
+    """Embed queries and stale candidates together; reuse unchanged board vectors."""
+    missing, vectors = [], {}
+    for index, item in enumerate(candidates):
+        row = cache.get((item["source"], item["id"]))
+        digest = hashlib.sha256(content_text(item["draft"]).encode()).hexdigest()
+        if row and row.embedding and row.embedding_model == EMBEDDING_MODEL and row.content_hash == digest and len(row.embedding) == DIMENSIONS:
+            vectors[index] = row.embedding
+        else:
+            missing.append(index)
+    generated = embed_texts(queries + [content_text(candidates[index]["draft"]) for index in missing])
+    for index, vector in zip(missing, generated[len(queries):]):
+        item = candidates[index]
+        vectors[index] = vector
+        cache_vector(session, board.id, item["source"], item["id"], item["draft"], vector)
+    if session is not None:
+        session.commit()
+    return generated[:len(queries)], [vectors[index] for index in range(len(candidates))]
+
+
+def similarity(left, right):
+    # embed_texts normalizes vectors, so the dot product is cosine similarity.
+    return sum(a * b for a, b in zip(left, right))
+
+
+def build_board_context(session: Session, meeting_id: UUID, transcript) -> dict:
+    board, candidates, cache, limited = load_board_candidates(session, meeting_id)
     epics = sorted({item["draft"]["epic"][:200] for item in candidates if item["draft"].get("epic")})[:100]
     query = "\n".join(segment.text for segment in transcript.segments)
     # Sample across long meetings so the end of a meeting is still represented.
@@ -111,22 +143,8 @@ def build_board_context(session: Session, meeting_id: UUID, transcript) -> dict:
     method = "keyword"
     if candidates and embeddings_enabled():
         try:
-            missing = []
-            vectors = {}
-            for index, item in enumerate(candidates):
-                row = cache.get((item["source"], item["id"]))
-                digest = hashlib.sha256(content_text(item["draft"]).encode()).hexdigest()
-                if row and row.embedding and row.embedding_model == EMBEDDING_MODEL and row.content_hash == digest and len(row.embedding) == DIMENSIONS:
-                    vectors[index] = row.embedding
-                else:
-                    missing.append(index)
-            generated = embed_texts([query[:6000]] + [content_text(candidates[index]["draft"]) for index in missing])
-            for index, vector in zip(missing, generated[1:]):
-                item = candidates[index]
-                vectors[index] = vector
-                cache_vector(session, board.id, item["source"], item["id"], item["draft"], vector)
-            session.commit()
-            scores = [sum(a * b for a, b in zip(generated[0], vectors[index])) for index in range(len(candidates))]
+            queries, vectors = embed_with_candidates(session, board, candidates, cache, [query[:6000]])
+            scores = [similarity(queries[0], vector) for vector in vectors]
             method = "embedding"
         except Exception:
             session.rollback()
@@ -136,8 +154,8 @@ def build_board_context(session: Session, meeting_id: UUID, transcript) -> dict:
     return {
         "board_id": str(board.id), "board_name": board.name,
         "epic_names": epics, "retrieval_method": method,
-        "candidate_limit_reached": len(stories) > MAX_CANDIDATES or len(external) > MAX_CANDIDATES,
-        "external_context_synced": bool(external),
+        "candidate_limit_reached": limited,
+        "external_context_synced": any(item["source"] != "local" for item in candidates),
         "existing_stories": [
             {"id": candidates[index]["id"], "source": candidates[index]["source"],
              "status": candidates[index]["status"], "story": content_text(candidates[index]["draft"]),
@@ -145,3 +163,53 @@ def build_board_context(session: Session, meeting_id: UUID, transcript) -> dict:
             for index in selected
         ],
     }
+
+
+def build_review_context(stories, *, session=None, meeting_id=None) -> dict:
+    """Find each draft's closest new drafts and existing board stories before review.
+
+    Scores rank candidates for semantic comparison; they never decide an INVEST
+    failure. The reviewer must distinguish containment, overlap, and shared topic.
+    """
+    if not stories or not embeddings_enabled():
+        return {}
+    try:
+        board, candidates, cache, limited = (
+            load_board_candidates(session, meeting_id) if session is not None
+            else (None, [], {}, False)
+        )
+        if len(stories) == 1 and not candidates:
+            return {}
+        draft_vectors, board_vectors = embed_with_candidates(
+            session, board, candidates, cache,
+            [content_text(story.model_dump()) for story in stories],
+        )
+        pairs, matches = {}, []
+        for index, vector in enumerate(draft_vectors):
+            neighbors = sorted(
+                ((other, similarity(vector, other_vector)) for other, other_vector in enumerate(draft_vectors) if other != index),
+                key=lambda item: item[1], reverse=True,
+            )[:3]
+            for other, score in neighbors:
+                left, right = sorted((index, other))
+                pairs[left, right] = {"left_index": left, "right_index": right, "similarity": round(score, 4)}
+            nearest_board = sorted(
+                enumerate(board_vectors), key=lambda item: similarity(vector, item[1]), reverse=True,
+            )[:3]
+            for other, other_vector in nearest_board:
+                candidate = candidates[other]
+                matches.append({
+                    "draft_index": index,
+                    "reference": f"{candidate['source']}:{candidate['id']}",
+                    "similarity": round(similarity(vector, other_vector), 4),
+                    "status": candidate["status"], "story": content_text(candidate["draft"]),
+                })
+        return {
+            "retrieval_method": "embedding", "candidate_limit_reached": limited,
+            "draft_pairs": list(pairs.values()), "board_matches": matches,
+        }
+    except Exception:
+        if session is not None:
+            session.rollback()
+        logger.warning("Per-story embeddings unavailable; review will compare supplied story text")
+        return {"retrieval_method": "unavailable", "draft_pairs": [], "board_matches": []}

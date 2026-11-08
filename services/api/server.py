@@ -6,7 +6,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from . import board_context, boards, connections, integrations, jira, meetings, stories
+from . import auto_import, board_context, boards, connections, integrations, jira, meetings, stories
 from .dependencies import SessionDep
 from .cors import configure_cors
 
@@ -15,6 +15,7 @@ configure_cors(app)
 app.include_router(boards.router)
 app.include_router(board_context.router)
 app.include_router(meetings.router)
+app.include_router(auto_import.router)
 app.include_router(stories.router)
 app.include_router(integrations.router)
 app.include_router(connections.router)

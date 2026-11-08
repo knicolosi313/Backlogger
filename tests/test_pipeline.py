@@ -164,6 +164,24 @@ def test_pipeline_uses_configured_creativity_default(gemini, monkeypatch):
     assert request.kwargs["config"].system_instruction == EXTRACT_PROMPTS["creative"]
 
 
+@pytest.mark.parametrize("origin,limit", [("discussed", 0.95), ("inferred", 0.84), ("proposed", 0.59)])
+def test_discovery_provenance_reaches_critique_and_limits_confidence(gemini, pipeline_results, origin, limit):
+    from services.worker.objects import DraftStory
+    extraction = pipeline_results[1]
+    extraction.stories[0] = DraftStory.model_validate(extraction.stories[0].model_dump() | {
+        "origin": origin, "assumptions": [] if origin == "discussed" else ["This is an unconfirmed additional workflow"],
+    })
+    pipeline_results[2].reviews[0].confidence = 0.95
+    score = pipeline_results[2].reviews[0].invest_score
+    saved = {}
+    pipeline._run_pipeline("synthetic.wav", "test-model", lambda stage, output: saved.update({stage: output}), creativity="exploratory")
+    request = gemini.models.generate_content.call_args_list[2].kwargs
+    assert "Generation creativity level: exploratory" in request["contents"]
+    assert f'"origin": "{origin}"' in request["contents"]
+    assert saved["critique"].reviews[0].confidence == limit
+    assert saved["critique"].reviews[0].invest_score == score
+
+
 def test_unknown_creativity_fails_before_upload_or_database(gemini, monkeypatch):
     engine = Mock(side_effect=AssertionError("Unexpected database connection"))
     monkeypatch.setattr(pipeline, "get_engine", engine)

@@ -23,6 +23,26 @@ def export_jira_story(session: Session, client: JiraClient, board_id: UUID, body
         raise HTTPException(status_code=502, detail="Jira request failed; retry to reconcile the saved issue") from None
 
 
+def validate_jira_destination(client, cloud_id, project_id, issue_type_id, additional_fields):
+    """Preflight access and required fields for manual and automatic imports."""
+    client.get_project(cloud_id, project_id)
+    provided_fields = {"project", "issuetype", "summary", "description", "labels", *additional_fields}
+    start_at = 0
+    while True:
+        metadata = client.get_create_fields(cloud_id, project_id, issue_type_id, start_at)
+        fields = metadata["fields"]
+        missing = [
+            field.get("fieldId", field.get("key")) for field in fields
+            if field.get("required") and not field.get("hasDefaultValue")
+            and field.get("fieldId", field.get("key")) not in provided_fields
+        ]
+        if missing:
+            raise HTTPException(status_code=409, detail={"message": "Jira requires additional fields", "fields": missing})
+        start_at += len(fields)
+        if not fields or start_at >= metadata.get("total", start_at):
+            break
+
+
 def _export(session, client, board_id, body):
     board = get_record(session, Board, board_id)
     if board.provider != "jira":
@@ -63,23 +83,7 @@ def _export(session, client, board_id, body):
         elif record is not None and record.status == "pending":
             raise HTTPException(status_code=409, detail="Issue creation is pending or uncertain; no new issue was created")
     if issue_key is None:
-        # Check permissions and that the selected issue type has creation metadata.
-        client.get_project(cloud_id, project_id)
-        provided_fields = {"project", "issuetype", "summary", "description", "labels", *body.additional_fields}
-        start_at = 0
-        while True:
-            metadata = client.get_create_fields(cloud_id, project_id, body.issue_type_id, start_at)
-            fields = metadata["fields"]
-            missing = [
-                field.get("fieldId", field.get("key")) for field in fields
-                if field.get("required") and not field.get("hasDefaultValue")
-                and field.get("fieldId", field.get("key")) not in provided_fields
-            ]
-            if missing:
-                raise HTTPException(status_code=409, detail={"message": "Jira requires additional fields", "fields": missing})
-            start_at += len(fields)
-            if not fields or start_at >= metadata.get("total", start_at):
-                break
+        validate_jira_destination(client, cloud_id, project_id, body.issue_type_id, body.additional_fields)
 
     if record is None:
         record = Import(story_id=story.id, idempotency_key=f"jira:{story.id}")

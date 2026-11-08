@@ -47,6 +47,7 @@ describe('meeting evidence playback', () => {
   it('opens the player in the story instead of navigating to a web app', async () => {
     const story: Story = {
       id: 'story-one', meetingId: 'meeting-one', status: 'draft', title: 'Reset password',
+      origin: 'proposed', assumptions: ['A reset email flow would help users recover access.'],
       persona: 'member', goal: 'reset a password', benefit: 'access my account',
       acceptanceCriteria: ['Send a reset email'], priority: 'med', points: null,
       evidence: [{ startSeconds: 2, endSeconds: 5, speaker: 'Alex', quote: 'Send a reset email' }],
@@ -56,6 +57,9 @@ describe('meeting evidence playback', () => {
       story, settings, onChange: vi.fn(), onBack: vi.fn(),
     })));
     expect(container.querySelector('audio')).toBeNull();
+    expect(container.textContent).toContain('AI proposal');
+    expect(container.textContent).toContain('not an agreed requirement');
+    expect(container.textContent).toContain('A reset email flow would help users recover access.');
     const jump = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('Jump to moment'))!;
     expect(jump.textContent).toContain('00:02');
     expect(container.querySelector('a[href*="/meetings/"]')).toBeNull();

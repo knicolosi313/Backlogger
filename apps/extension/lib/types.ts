@@ -2,6 +2,16 @@
 
 export type Creativity = 'conservative' | 'balanced' | 'creative' | 'exploratory';
 
+export interface AutoImportStatus {
+  meeting_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  imported: number;
+  skipped: number;
+  failed: number;
+  error: string | null;
+  updated_at: string;
+}
+
 export interface Settings {
   apiUrl: string;
   apiToken: string;
@@ -193,6 +203,8 @@ export interface Story {
   status: StoryStatus;
 
   title: string;
+  origin?: 'discussed' | 'inferred' | 'proposed';
+  assumptions?: string[];
   persona: string;
   goal: string;
   benefit: string;

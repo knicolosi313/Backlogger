@@ -151,6 +151,18 @@ function StoryBody({ story, settings }: { story: Story; settings: Settings }) {
         Priority: {story.priority} · Points: {story.points ?? 'not estimated'}
       </p>
 
+      {(story.origin === 'proposed' || story.origin === 'inferred') && (
+        <aside className="note warn">
+          <strong>{story.origin === 'proposed' ? 'AI proposal' : 'Inferred story'}</strong>
+          <p>{story.origin === 'proposed'
+            ? 'An idea inspired by the meeting, not an agreed requirement. Review it with the team.'
+            : 'This story includes inferred details that need confirmation.'}</p>
+          {!!story.assumptions?.length && (
+            <ul className="bullets">{story.assumptions.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul>
+          )}
+        </aside>
+      )}
+
       <section className="stack">
         <h3>Acceptance criteria</h3>
         <ul className="bullets">

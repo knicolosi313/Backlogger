@@ -150,7 +150,7 @@ def test_pipeline_stage_checkpoints_survive_failure(
         session.commit()
         meeting_id = meeting.id
 
-    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced", board_context=None):
+    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced", board_context=None, review_context=None):
         transcript = Transcript(language="en", segments=[])
         save_stage("transcribe", transcript)
         if should_fail:

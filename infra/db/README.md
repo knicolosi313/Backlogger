@@ -18,6 +18,7 @@ The database name is `tsdb`; the application uses the `backlogger` schema inside
    ./infra/db/setup.ps1 -Action Apply -Migration 002_trello_connections.sql
    ./infra/db/setup.ps1 -Action Apply -Migration 003_jira_connections.sql
    ./infra/db/setup.ps1 -Action Apply -Migration 004_story_context.sql
+   ./infra/db/setup.ps1 -Action Apply -Migration 005_auto_import.sql
    ./infra/db/setup.ps1 -Action Check
    ```
 
@@ -39,6 +40,10 @@ Future changes should use new, numbered migrations.
 `-Migration` selects a specific migration; its default remains `001_initial.sql`.
 
 ## Initial storage
+
+Migration 005 adds per-meeting opt-in settings and progress in `auto_import_runs`.
+See [automatic imports](../../docs/AUTO_IMPORT.md) for eligibility, account binding,
+and retry behavior. No existing meetings are automatically exported by migration.
 
 Migration 004 adds `story_context`, a board-scoped cache of external work and
 per-story Gemini embeddings. See [board context](../../docs/BOARD_CONTEXT.md)

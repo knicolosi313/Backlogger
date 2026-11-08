@@ -136,8 +136,12 @@ def connection_is_active(connection: TrelloConnection | None) -> bool:
 
 
 def get_trello_client(request: Request, session: SessionDep) -> TrelloClient:
+    return client_for_connection(browser_connection(request, session))
+
+
+def client_for_connection(connection: TrelloConnection | None) -> TrelloClient:
+    """Resolve a saved browser account for an authorized background export."""
     api_key = trello_api_key()
-    connection = browser_connection(request, session)
     if not connection_is_active(connection):
         raise HTTPException(status_code=401, detail="Connect your Trello account first")
     try:

@@ -1,5 +1,10 @@
 # Frontend board selection and exports
 
+Optional automatic exports are configured in the meeting processing request;
+see [auto-import](AUTO_IMPORT.md). The extension's Record toggle and confidence
+slider now send the selected destination/threshold, with progress and retries
+shown after processing. Auto-import runs on the backend rather than panel polling.
+
 Audio uploads also support a private Supabase bucket configured on the backend.
 The frontend upload/process endpoints stay the same; treat `media_key` as opaque.
 See [Supabase storage](SUPABASE_STORAGE.md) for configuration and processing.

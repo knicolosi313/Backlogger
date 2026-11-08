@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { countMeetingStories, createMeeting, getProcessingStatus, listMeetings, startProcessing, uploadMedia } from '@/lib/api';
+import { countStoriesForMeeting, createMeeting, getProcessingStatus, listMeetings, startProcessing, uploadMedia } from '@/lib/api';
+import { AutoImportProgress } from './AutoImportProgress';
 import { formatClock, formatPercent, formatShortDate, formatSize } from '@/lib/format';
 import type { PanelToBackground } from '@/lib/messages';
 import { AUDIO_FILE_ACCEPT, PROCESSING_LABELS, audioTypeFor } from '@/lib/options';
@@ -157,7 +158,7 @@ export function RecordTab({ settings, board, onReviewStories }: Props) {
       )}
 
       {state.status === 'done' && (
-        <DoneCard settings={settings} board={board} meetingId={state.meetingId} onReviewStories={onReviewStories} />
+        <DoneCard settings={settings} meetingId={state.meetingId} onReviewStories={onReviewStories} />
       )}
 
       {state.status === 'error' && (
@@ -200,18 +201,16 @@ export function RecordTab({ settings, board, onReviewStories }: Props) {
 
 function DoneCard({
   settings,
-  board,
   meetingId,
   onReviewStories,
 }: {
   settings: Settings;
-  board: BoardConnection;
   meetingId: string;
   onReviewStories: () => void;
 }) {
   const count = useLoad(
-    () => (board.boardId ? countMeetingStories(settings, board.boardId, meetingId) : Promise.resolve(undefined)),
-    [board.boardId, meetingId],
+    () => countStoriesForMeeting(settings, meetingId),
+    [settings.apiUrl, meetingId],
   );
   const reset = () => recorderState.setValue({ status: 'idle' });
   const stories = count.data;
@@ -243,6 +242,7 @@ function DoneCard({
           Review drafts
         </button>
       )}
+      <AutoImportProgress settings={settings} meetingId={meetingId} />
       <button onClick={reset}>Record another meeting</button>
     </section>
   );
@@ -527,7 +527,7 @@ function AutoImportToggle({ settings }: { settings: Settings }) {
       </label>
       <p className="hint">
         {settings.autoImport
-          ? `Stories at ${formatPercent(settings.autoImportThreshold)} confidence or higher, with evidence from the meeting, go straight to ${destinationText(settings)} with an AI Draft label. Everything else waits for your review.`
+          ? `Discussed stories at ${formatPercent(settings.autoImportThreshold)} confidence or higher that pass all INVEST checks and need no clarification go to ${destinationText(settings)}. AI proposals, inferred stories, and review issues stay for manual review. Settings are captured when you submit.`
           : `Off. You approve every story before it reaches ${providerLabel(settings.selectedBoard)}.`}
       </p>
     </section>

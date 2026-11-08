@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 def process_meeting(
-    meeting_id: UUID, media_key: str, model: str, creativity: CreativityLevel = "balanced",
+    meeting_id: UUID, media_key: str, model: str, creativity: CreativityLevel = "balanced", auto_import: bool = False,
 ) -> None:
     """Save raw pipeline outputs, then create reviewable drafts in one transaction."""
+    processing_succeeded = False
     try:
         with processing_audio(media_key) as audio_path:
             _, extraction, critique = run_pipeline(
@@ -60,6 +61,7 @@ def process_meeting(
             board_id = meeting.board_id
             # Keep drafts available to the indexing step after the commit.
             session.expire_on_commit = False
+        processing_succeeded = True
         try:
             with Session(get_engine()) as session:
                 index_stories(session, board_id, created_stories)
@@ -75,3 +77,9 @@ def process_meeting(
                     meeting.status = "failed"
         except Exception:
             logger.error("Could not save failure status for meeting %s", meeting_id)
+    if auto_import:
+        from .auto_import import processing_failed, run_auto_import
+        if processing_succeeded:
+            run_auto_import(meeting_id)
+        else:
+            processing_failed(meeting_id)

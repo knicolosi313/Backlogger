@@ -190,6 +190,27 @@ class JiraConnection(Record, table=True):
     state_expires_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
+class AutoImportRun(Record, table=True):
+    """One meeting's opted-in export settings and progress; no plaintext credentials."""
+
+    __tablename__ = "auto_import_runs"
+    __table_args__ = {"schema": "backlogger"}
+
+    meeting_id: UUID = Field(foreign_key="backlogger.meetings.id", unique=True)
+    connection_id: UUID
+    options: dict[str, Any] = Field(sa_type=JSONB)
+    status: str = Field(default="pending", sa_type=Text)
+    story_ids: list[str] = Field(default_factory=list, sa_type=JSONB)
+    imported: int = 0
+    skipped: int = 0
+    failed: int = 0
+    error: str | None = Field(default=None, sa_type=Text)
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+        sa_column_kwargs={"server_default": text("now()"), "onupdate": utc_now},
+    )
+
+
 class SchemaMigration(SQLModel, table=True):
     __tablename__ = "schema_migrations"
     __table_args__ = {"schema": "backlogger"}

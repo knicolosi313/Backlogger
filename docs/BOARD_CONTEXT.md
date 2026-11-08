@@ -60,13 +60,52 @@ overlap for clarification. Similarity is not proof of duplication; drafts are
 never automatically merged, rejected, or deleted on that basis. Every new
 requirement and evidence quote must still come from the current meeting.
 
+## Per-story scope checks before critique
+
+Transcript-level retrieval provides context for extraction. After extraction,
+each new draft is also embedded individually before the critique call. The
+review pass compares those vectors with the other new drafts and the cached
+board candidates. It supplies up to three nearest new drafts and three nearest
+board stories per draft, including board stories outside the original 20-item
+transcript shortlist. Board filtering, rejected-story exclusion, candidate caps,
+and cache invalidation are the same in both passes. Neighbors are ranked rather
+than accepted or rejected using an arbitrary similarity threshold.
+
+Gemini must explicitly assess every supplied neighbor in the review's
+`relationships` field: independent, overlap, contains, contained_by, or depends_on.
+It compares behavior and acceptance criteria, rather than treating embedding
+similarity as proof of overlapping scope. For example, a story implementing all
+calculator operations contains multiplication; a separate multiplication story
+conflicts with that scope. Distinct addition and multiplication stories can
+still be independent despite sharing terminology or an epic.
+
+Confirmed overlap or containment produces an `Independent` flag on both new
+drafts, with the counterpart's index/title and a scope explanation. A dependency
+flags the dependent draft only. Board conflicts identify the existing source:id.
+Unknown, self-referential, or ambiguous references are discarded. Scores are
+capped to reflect failed criteria and confidence is capped at 0.84 so a scope
+conflict is visible during review. Stories are not merged or rejected for users.
+
+A review omitting a supplied comparison is retried once. If it still omits the
+comparison, processing fails while preserving earlier checkpoints, instead of
+silently treating the unassessed candidate as independent. If embeddings are
+disabled or unavailable, Gemini still compares the supplied text directly;
+the system does not invent semantic scores or conflict findings.
+
+This adds embedding calls for newly extracted drafts before critique, as well
+as their existing indexing step after persistence. Stored reviews are not
+automatically reprocessed by a code update. A live synthetic check confirmed
+both the calculator containment case and the independent addition/multiplication
+case; it does not guarantee perfect classification of all future stories.
+
 ## Limits and operation
 
 Apply `infra/db/004_story_context.sql` after migrations 001-003. It adds a
 JSONB-based cache table and preserves existing application data.
 
 This MVP ranks up to 500 recent local stories and 500 external items, sends the
-20 most relevant to Gemini, and includes up to 100 known epic names. Text is
+20 most relevant to extraction, and includes up to 100 known epic names. Critique
+also receives the per-draft neighbors described above. Text is
 bounded, and very long transcripts are sampled at the beginning, middle, and
 end for retrieval. External sync rejects snapshots over 500 items or incomplete
 pagination. Retrieval reports its method and whether candidate limits were

@@ -2,9 +2,9 @@ import type { Creativity, ExportStatus, InvestKey, ProcessingStatus, StoryStatus
 
 export const CREATIVITY_OPTIONS: Array<{ value: Creativity; label: string; help: string }> = [
   { value: 'conservative', label: 'Conservative', help: 'Only what was clearly said in the meeting.' },
-  { value: 'balanced', label: 'Balanced (default)', help: 'Reasonable wording and structure around what was said.' },
-  { value: 'creative', label: 'Creative', help: 'May suggest extras. They are flagged as AI additions.' },
-  { value: 'exploratory', label: 'Exploratory', help: 'Also offers alternatives, in a separate section.' },
+  { value: 'balanced', label: 'Balanced (default)', help: 'Stated requests plus strongly implied needs and useful story splits.' },
+  { value: 'creative', label: 'Creative', help: 'Adds useful adjacent ideas as labeled proposals.' },
+  { value: 'exploratory', label: 'Exploratory', help: 'Reaches widely for many story ideas, edge cases, and extensions. Proposals need confirmation.' },
 ];
 
 // TODO: ask the backend which models it supports

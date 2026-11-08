@@ -24,7 +24,8 @@ from services.db import get_engine
 from services.models import Meeting, PipelineOutput
 
 from .objects import CritiqueResult, ExtractionResult, Transcript
-from .board_context import build_board_context
+from .board_context import build_board_context, build_review_context
+from .scope_review import apply_scope_findings, missing_scope_checks
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
 from .prompts.extract import CreativityLevel, get_extract_prompt
 from .prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
@@ -39,6 +40,7 @@ def _run_pipeline(
     *,
     creativity: CreativityLevel = "balanced",
     board_context: Callable[[Transcript], dict] | None = None,
+    review_context: Callable[[ExtractionResult], dict] | None = None,
 ):
     """Run Gemini and optionally save each result before starting the next pass."""
     from google import genai
@@ -98,16 +100,41 @@ def _run_pipeline(
         save_stage("extract", extraction)
 
     # Pass 3: stories + transcript -> reviews
+    relationships = review_context(extraction) if review_context is not None else build_review_context(extraction.stories)
+    relationship_input = (
+        f"Per-story embedding neighbors (candidates, not confirmed overlap):\n{json.dumps(relationships)}\n\n"
+        if relationships else ""
+    )
     stories_with_indexes = [
         {"index": index, **story.model_dump()}
         for index, story in enumerate(extraction.stories)
     ]
-    critique: CritiqueResult = generate_result(
-        CRITIQUE_SYSTEM_PROMPT,
-        context_input + f"Meeting transcript:\n{transcript_json}\n\n"
-        f"Draft stories:\n{json.dumps(stories_with_indexes)}",
-        CritiqueResult,
+    critique_input = (
+        f"Generation creativity level: {creativity}\n\n" + context_input + relationship_input
+        + f"Meeting transcript:\n{transcript_json}\n\n"
+        f"Draft stories:\n{json.dumps(stories_with_indexes)}"
     )
+    for attempt in range(2):
+        critique: CritiqueResult = generate_result(CRITIQUE_SYSTEM_PROMPT, critique_input, CritiqueResult)
+        apply_scope_findings(extraction, critique, relationships, context)
+        missing = missing_scope_checks(critique, relationships)
+        if not missing:
+            break
+        if attempt == 1:
+            raise ValueError("Critique omitted required embedding scope comparisons")
+        critique_input = (
+            "The previous review omitted scope comparisons. Return a complete review "
+            "for every draft, explicitly assessing these references in relationships "
+            "(independent is valid when the scopes differ):\n"
+            f"{json.dumps(missing)}\n\n" + critique_input
+        )
+    for review in critique.reviews:
+        if 0 <= review.index < len(extraction.stories):
+            origin = extraction.stories[review.index].origin
+            if origin == "inferred":
+                review.confidence = min(review.confidence, 0.84)
+            elif origin == "proposed":
+                review.confidence = min(review.confidence, 0.59)
     if save_stage is not None:
         save_stage("critique", critique)
 
@@ -166,7 +193,14 @@ def run_pipeline(
             with Session(engine) as session:
                 return build_board_context(session, meeting_id, transcript)
 
-        result = _run_pipeline(audio_path, model, save_stage, creativity=creativity, board_context=load_context)
+        def load_review_context(extraction):
+            with Session(engine) as session:
+                return build_review_context(extraction.stories, session=session, meeting_id=meeting_id)
+
+        result = _run_pipeline(
+            audio_path, model, save_stage, creativity=creativity,
+            board_context=load_context, review_context=load_review_context,
+        )
         if mark_completed:
             set_status("completed")
     except Exception:

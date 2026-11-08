@@ -1,5 +1,6 @@
 import { ApiError, request, type ApiConfig } from './http';
 import type {
+  AutoImportStatus,
   BoardAnalytics,
   Creativity,
   ExportRecord,
@@ -118,14 +119,30 @@ export async function uploadMedia(cfg: ApiConfig, meetingId: string, audio: Blob
 
 // Refresh the meeting's board, which may differ from the board currently selected
 // in Settings. A failed refresh stays visible so we don't silently use stale work.
-// The backend only takes the creativity level when processing. It uses its own GEMINI_MODEL,
-// so the model setting isn't sent anywhere yet.
-export async function startProcessing(cfg: ApiConfig, meetingId: string, creativity: Creativity): Promise<void> {
+// Processing snapshots auto-import settings; the backend keeps working if the panel closes.
+export async function startProcessing(cfg: Settings, meetingId: string, creativity: Creativity): Promise<void> {
   const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
+  let autoImport: Record<string, unknown> | undefined;
+  if (cfg.autoImport) {
+    const board = cfg.selectedBoard;
+    if (!board || board.id !== meeting.board_id) throw new Error('Select this meeting’s board in Settings before enabling auto-import.');
+    if (!Number.isFinite(cfg.autoImportThreshold) || cfg.autoImportThreshold < 0.5 || cfg.autoImportThreshold > 1) {
+      throw new Error('Auto-import confidence must be between 50% and 100%.');
+    }
+    const destination = importDestination(cfg).id;
+    if (!destination) throw new Error(boardProvider(board) === 'jira' ? 'Pick a Jira issue type in Settings.' : 'Pick a Trello list in Settings.');
+    autoImport = {
+      confidence_threshold: cfg.autoImportThreshold,
+      evidence_base_url: cfg.apiUrl,
+      ...(boardProvider(board) === 'jira'
+        ? { issue_type_id: destination, additional_fields: await jiraFieldsFor(cfg, board, destination) }
+        : { list_id: destination }),
+    };
+  }
   await request(cfg, `/api/boards/${encodeURIComponent(meeting.board_id)}/context/sync`, { method: 'POST' });
   await request(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/process`, {
     method: 'POST',
-    json: { creativity },
+    json: { creativity, ...(autoImport ? { auto_import: autoImport } : {}) },
   });
 }
 
@@ -138,6 +155,24 @@ export function getMeetingAudio(cfg: ApiConfig, meetingId: string, signal?: Abor
 export async function getProcessingStatus(cfg: ApiConfig, meetingId: string): Promise<ProcessingStatus> {
   const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
   return meetingStatus(meeting);
+}
+
+export async function getAutoImportStatus(cfg: ApiConfig, meetingId: string): Promise<AutoImportStatus | null> {
+  try {
+    return await request<AutoImportStatus>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/auto-import`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export function retryAutoImport(cfg: ApiConfig, meetingId: string): Promise<AutoImportStatus> {
+  return request<AutoImportStatus>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/auto-import/retry`, { method: 'POST' });
+}
+
+export async function countStoriesForMeeting(cfg: ApiConfig, meetingId: string): Promise<number> {
+  const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
+  return countMeetingStories(cfg, meeting.board_id, meetingId);
 }
 
 export async function listMeetings(cfg: ApiConfig, boardId: string): Promise<MeetingSummary[]> {
@@ -154,6 +189,8 @@ export async function listMeetings(cfg: ApiConfig, boardId: string): Promise<Mee
 
 interface DraftWire {
   title: string;
+  origin?: Story['origin'];
+  assumptions?: string[];
   as_a: string;
   i_want: string;
   so_that: string;
@@ -229,6 +266,8 @@ function toStory(wire: StoryWire): Story {
     meetingId: wire.meeting_id,
     status: wire.status,
     title: draft.title,
+    origin: draft.origin ?? 'discussed',
+    assumptions: draft.assumptions ?? [],
     persona: draft.as_a,
     goal: draft.i_want,
     benefit: draft.so_that,

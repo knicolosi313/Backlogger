@@ -1,5 +1,6 @@
 import type { AnyMessage } from '@/lib/messages';
 import { recorderState } from '@/lib/storage';
+import { openPanelFromPage } from '@/lib/pageLauncher';
 
 // Background worker coordinates audio recording 
 
@@ -12,8 +13,11 @@ export default defineBackground(() => {
     if (tab.id !== undefined) void browser.sidePanel.open({ tabId: tab.id });
   });
 
-  browser.runtime.onMessage.addListener((message: AnyMessage) => {
+  browser.runtime.onMessage.addListener((message: AnyMessage, sender, sendResponse) => {
     switch (message.type) {
+      case 'OPEN_BACKLOGGER':
+        void openPanelFromPage(sender, browser.runtime.id, (options) => browser.sidePanel.open(options)).then(sendResponse);
+        return true;
       case 'START_RECORDING':
         void startRecording();
         break;

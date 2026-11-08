@@ -70,3 +70,20 @@ def test_solution_tasks_are_preserved_in_story_json(pipeline_results):
     restored = DraftStory.model_validate_json(story.model_dump_json())
     assert len(restored.acceptance_criteria) == 2
     assert restored.solution_tasks == ["Add the password reset request flow", "Implement reset email delivery"]
+
+
+def test_existing_drafts_load_without_discovery_metadata(pipeline_results):
+    data = pipeline_results[1].stories[0].model_dump(exclude={"origin", "assumptions"})
+    restored = DraftStory.model_validate(data)
+    assert restored.origin == "discussed"
+    assert restored.assumptions == []
+
+
+@pytest.mark.parametrize("origin", ["inferred", "proposed"])
+def test_unconfirmed_discovery_stories_cannot_claim_no_clarification_is_needed(pipeline_results, origin):
+    data = pipeline_results[1].stories[0].model_dump() | {
+        "origin": origin, "needs_clarification": False, "assumptions": ["Users would benefit from recovery reminders"],
+    }
+    story = DraftStory.model_validate(data)
+    assert story.needs_clarification is True
+    assert DraftStory.model_validate_json(story.model_dump_json()).assumptions == story.assumptions

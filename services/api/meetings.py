@@ -5,11 +5,11 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
-from services.models import Board, Meeting, PipelineOutput
+from services.models import AutoImportRun, Board, Meeting, PipelineOutput
 from services.worker.objects import Transcript
 from services.worker.prompts.extract import get_extract_prompt
 
@@ -84,7 +84,7 @@ def upload_media(meeting_id: UUID, file: UploadFile, session: SessionDep):
 
 @router.post("/{meeting_id}/process", response_model=ProcessAccepted, status_code=202)
 def start_processing(
-    meeting_id: UUID, tasks: BackgroundTasks, session: SessionDep,
+    meeting_id: UUID, tasks: BackgroundTasks, session: SessionDep, request: Request,
     options: ProcessOptions | None = None,
 ):
     meeting = get_record(session, Meeting, meeting_id, lock=True)
@@ -103,14 +103,22 @@ def start_processing(
     except ValueError:
         raise HTTPException(status_code=503, detail="DEFAULT_CREATIVITY is not a supported creativity level") from None
 
+    auto_import = options.auto_import if options is not None else None
+    if auto_import is not None:
+        from .auto_import import configure_auto_import
+        configure_auto_import(request, session, meeting, auto_import)
+    elif meeting.status == "failed":
+        previous_run = session.exec(select(AutoImportRun).where(AutoImportRun.meeting_id == meeting.id).with_for_update()).first()
+        if previous_run is not None and not previous_run.story_ids and previous_run.status != "running":
+            # Retrying audio processing with the toggle off must not retain old opt-in settings.
+            session.delete(previous_run)
     media_key = meeting.media_key
     meeting.status = "processing"
     session.commit()
-    tasks.add_task(
-        process_meeting, meeting_id, media_key,
-        os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-lite",
-        creativity,
-    )
+    arguments = [meeting_id, media_key, os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-lite", creativity]
+    if auto_import is not None:
+        arguments.append(True)
+    tasks.add_task(process_meeting, *arguments)
     return ProcessAccepted(
         meeting_id=meeting_id, status="processing", status_url=f"/api/meetings/{meeting_id}",
     )

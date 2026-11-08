@@ -22,7 +22,7 @@ def api(database_connection, monkeypatch, tmp_path, pipeline_results):
         with new_session() as session:
             yield session
 
-    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced", board_context=None):
+    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced", board_context=None, review_context=None):
         for stage, output in zip(["transcribe", "extract", "critique"], pipeline_results):
             save_stage(stage, output)
         return pipeline_results
@@ -399,7 +399,7 @@ def test_processing_claim_prevents_duplicate_job_and_upload(api, monkeypatch):
 
 
 def test_model_failure_records_failed_status_and_keeps_transcript(api, monkeypatch, pipeline_results):
-    def fail_after_transcribe(audio_path, model, save_stage, *, creativity="balanced", board_context=None):
+    def fail_after_transcribe(audio_path, model, save_stage, *, creativity="balanced", board_context=None, review_context=None):
         save_stage("transcribe", pipeline_results[0])
         raise RuntimeError("Synthetic model failure")
 

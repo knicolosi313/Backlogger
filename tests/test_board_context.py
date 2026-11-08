@@ -95,6 +95,27 @@ def test_semantic_retrieval_caches_and_refreshes_edited_stories(board_data, pipe
     assert rows[0].payload["title"] == story.draft["title"]
 
 
+def test_each_draft_searches_board_candidates_beyond_the_transcript_shortlist(board_data, pipeline_results, monkeypatch):
+    session, board, meeting, _ = board_data
+    for index in range(25):
+        session.add(StoryContext(board_id=board.id, source="trello", external_id=f"other{index:02}", payload={"title": f"Unrelated work {index}"}))
+    session.add(StoryContext(board_id=board.id, source="trello", external_id="target", payload={"title": "Reset a password"}))
+    session.commit()
+    monkeypatch.setenv("STORY_EMBEDDINGS_ENABLED", "true")
+
+    def embed(texts):
+        return [([1.0, 0.0] if "Reset a password" in text else [0.0, 1.0]) + [0.0] * 766 for text in texts]
+
+    fake = Mock(side_effect=embed)
+    monkeypatch.setattr(context, "embed_texts", fake)
+    initial = context.build_board_context(session, meeting.id, pipeline_results[0])
+    assert not any(item["id"] == "target" for item in initial["existing_stories"])
+    review = context.build_review_context(pipeline_results[1].stories, session=session, meeting_id=meeting.id)
+    assert any(item["reference"] == "trello:target" for item in review["board_matches"])
+    assert len(fake.call_args.args[0]) == 1  # Existing board vectors were reused.
+    assert not any("secret" in item["reference"] for item in review["board_matches"])
+
+
 def test_embedding_failure_keeps_context_available(board_data, pipeline_results, monkeypatch):
     session, _, meeting, story = board_data
     monkeypatch.setenv("STORY_EMBEDDINGS_ENABLED", "true")

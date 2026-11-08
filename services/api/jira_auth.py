@@ -108,8 +108,12 @@ def finish_connection(request: Request, session: Session, state: str, code: str)
 
 
 def get_jira_client(request: Request, session: SessionDep) -> JiraClient:
+    return client_for_connection(browser_connection(request, session, lock=True), session)
+
+
+def client_for_connection(record: JiraConnection | None, session: Session) -> JiraClient:
+    """Resolve/refresh a saved account at export time, after meeting processing."""
     client_id, secret, _ = configuration()
-    record = browser_connection(request, session, lock=True)
     if record is None or not record.encrypted_token:
         raise HTTPException(status_code=401, detail="Connect your Jira account first")
     cipher = token_cipher()
