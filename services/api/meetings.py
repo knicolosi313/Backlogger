@@ -1,5 +1,6 @@
 """Meeting creation, uploads, processing, and saved transcripts."""
 
+import logging
 import os
 from uuid import UUID
 
@@ -12,10 +13,11 @@ from services.worker.prompts.extract import get_extract_prompt
 
 from .dependencies import SessionDep, get_record
 from .jobs import process_meeting
-from .media import media_path, save_audio
+from .media import delete_media, media_exists, save_audio
 from .schemas import MeetingCreate, MeetingStatus, ProcessAccepted, ProcessOptions
 
 router = APIRouter(prefix="/api/meetings", tags=["Meetings"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("", response_model=Meeting, status_code=201)
@@ -57,14 +59,23 @@ def upload_media(meeting_id: UUID, file: UploadFile, session: SessionDep):
     meeting = get_record(session, Meeting, meeting_id, lock=True)
     if meeting.status not in {"uploaded", "failed"}:
         raise HTTPException(status_code=409, detail="Meeting cannot receive audio in its current state")
+    previous_key = meeting.media_key
     key = save_audio(meeting_id, file)
     try:
         meeting.media_key = key
         meeting.status = "uploaded"
         session.commit()
     except Exception:
-        media_path(key).unlink(missing_ok=True)
+        try:
+            delete_media(key)
+        except Exception:
+            logger.warning("Could not clean up a failed media upload for meeting %s", meeting_id)
         raise
+    if previous_key and previous_key != key:
+        try:
+            delete_media(previous_key)
+        except Exception:
+            logger.warning("Could not remove replaced media for meeting %s", meeting_id)
     session.refresh(meeting)
     return meeting
 
@@ -77,7 +88,7 @@ def start_processing(
     meeting = get_record(session, Meeting, meeting_id, lock=True)
     if meeting.status not in {"uploaded", "failed"}:
         raise HTTPException(status_code=409, detail="Meeting is already processing or completed")
-    if not meeting.media_key or not media_path(meeting.media_key).is_file():
+    if not meeting.media_key or not media_exists(meeting.media_key):
         raise HTTPException(status_code=409, detail="Upload audio before processing")
     if not os.getenv("GEMINI_API_KEY"):
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")

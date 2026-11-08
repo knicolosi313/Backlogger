@@ -153,6 +153,55 @@ def test_complete_upload_process_edit_and_review_workflow(
     assert api.get(f"/api/boards/{board_id}/stories", params={"status": "accepted"}).json() == []
 
 
+def test_supabase_upload_replacement_and_processing(api, monkeypatch, pipeline_results, tmp_path):
+    from unittest.mock import Mock
+    import requests
+    from services.api import media
+
+    objects = {}
+    storage = Mock(bucket="meeting-audio")
+    storage.upload.side_effect = lambda key, file, content_type: objects.update({key: file.read()})
+    storage.exists.side_effect = lambda key: key in objects
+    storage.delete.side_effect = lambda key: objects.pop(key, None)
+
+    def download(key):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = objects[key]
+        response._content_consumed = True
+        return response
+
+    storage.download.side_effect = download
+    monkeypatch.setattr(media, "SupabaseStorage", lambda *args: storage)
+    monkeypatch.setenv("MEDIA_STORAGE", "supabase")
+    observed_paths = []
+    original_pipeline = jobs.run_pipeline
+
+    def check_download(audio_path, **kwargs):
+        from pathlib import Path
+        path = Path(audio_path)
+        assert path.suffix == ".webm"
+        assert path.read_bytes() == b"replacement audio"
+        observed_paths.append(path)
+        return original_pipeline(audio_path, **kwargs)
+
+    monkeypatch.setattr(jobs, "run_pipeline", check_download)
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    url = f"/api/meetings/{meeting['id']}"
+    for data in (b"original audio", b"replacement audio"):
+        response = api.post(f"{url}/media", files={"file": ("audio.webm", data, "audio/webm")})
+        assert response.status_code == 200, response.text
+        assert response.json()["media_key"].startswith("supabase://meeting-audio/")
+    assert len(objects) == 1
+    assert storage.delete.call_count == 1
+    assert api.post(f"{url}/process").status_code == 202
+    assert api.get(url).json()["status"] == "completed"
+    assert observed_paths and not observed_paths[0].exists()
+    assert len(objects) == 1  # Keep the original recording for retries/history.
+    assert len(api.get(f"/api/boards/{board['id']}/stories").json()) == len(pipeline_results[1].stories)
+
+
 def test_restore_rejected_story_preserves_content_and_records_one_event(api, database_connection):
     from services.models import AnalyticsEvent
 

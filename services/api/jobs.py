@@ -11,7 +11,7 @@ from services.worker.pipeline import run_pipeline
 from services.worker.board_context import index_stories
 from services.worker.prompts.extract import CreativityLevel
 
-from .media import media_path
+from .media import processing_audio
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,12 @@ def process_meeting(
 ) -> None:
     """Save raw pipeline outputs, then create reviewable drafts in one transaction."""
     try:
-        _, extraction, critique = run_pipeline(
-            str(media_path(media_key)), model=model, meeting_id=meeting_id,
-            mark_completed=False,
-            creativity=creativity,
-        )
+        with processing_audio(media_key) as audio_path:
+            _, extraction, critique = run_pipeline(
+                str(audio_path), model=model, meeting_id=meeting_id,
+                mark_completed=False,
+                creativity=creativity,
+            )
         reviews = {review.index: review for review in critique.reviews}
         if len(reviews) != len(critique.reviews) or set(reviews) != set(range(len(extraction.stories))):
             raise ValueError("Critique must contain one review per extracted story")

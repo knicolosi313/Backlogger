@@ -1,5 +1,9 @@
 # Frontend board selection and exports
 
+Audio uploads also support a private Supabase bucket configured on the backend.
+The frontend upload/process endpoints stay the same; treat `media_key` as opaque.
+See [Supabase storage](SUPABASE_STORAGE.md) for configuration and processing.
+
 Before processing audio, refresh the meeting's existing external work with
 `POST /api/boards/{board_id}/context/sync` using the connected account cookie.
 The extension already does this. See [board context](BOARD_CONTEXT.md) for epic
