@@ -43,6 +43,16 @@ class TrelloClient:
             params={"fields": "id,name,color", "limit": 1000},
         )
 
+    def list_context_cards(self, board_id: str):
+        """Include archived work so it can still be recognized as existing scope."""
+        return self._request(
+            "GET", f"boards/{board_id}/cards/all",
+            params={"fields": "id,name,desc,closed,labels", "limit": 501},
+        )
+
+    def list_context_checklists(self, board_id: str):
+        return self._request("GET", f"boards/{board_id}/checklists")
+
     def create_label(self, board_id: str, name: str, color: str = "blue"):
         """Create a board label, for example an 'AI Draft' label."""
         return self._request(

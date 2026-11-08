@@ -22,7 +22,7 @@ def api(database_connection, monkeypatch, tmp_path, pipeline_results):
         with new_session() as session:
             yield session
 
-    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced"):
+    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced", board_context=None):
         for stage, output in zip(["transcribe", "extract", "critique"], pipeline_results):
             save_stage(stage, output)
         return pipeline_results
@@ -153,6 +153,56 @@ def test_complete_upload_process_edit_and_review_workflow(
     assert api.get(f"/api/boards/{board_id}/stories", params={"status": "accepted"}).json() == []
 
 
+def test_restore_rejected_story_preserves_content_and_records_one_event(api, database_connection):
+    from services.models import AnalyticsEvent
+
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    upload_and_process(api, meeting["id"])
+    original = api.get(f"/api/boards/{board['id']}/stories").json()[0]
+    url = f"/api/stories/{original['id']}/decision"
+    assert api.post(url, json={"decision": "reject"}).status_code == 200
+    for _ in range(2):
+        response = api.post(url, json={"decision": "restore"})
+        assert response.status_code == 200, response.text
+        restored = response.json()
+        assert restored["status"] == "draft"
+        for field in ("draft", "confidence", "invest_score", "critique"):
+            assert restored[field] == original[field]
+    pending = api.get(f"/api/boards/{board['id']}/stories", params={"status": "draft"}).json()
+    assert [story["id"] for story in pending] == [original["id"]]
+    analytics = api.get(f"/api/boards/{board['id']}/analytics").json()
+    assert analytics["story_counts"]["rejected"] == 0
+    assert analytics["draft_outcome_counts"]["rejected"] == 0
+    with Session(bind=database_connection, join_transaction_mode="create_savepoint") as session:
+        events = session.exec(select(AnalyticsEvent).where(
+            AnalyticsEvent.story_id == original["id"], AnalyticsEvent.event_type == "story_restored",
+        )).all()
+        assert len(events) == 1
+    assert api.post(url, json={"decision": "accept"}).json()["status"] == "accepted"
+
+
+@pytest.mark.parametrize("status", ["accepted", "needs_changes", "imported", "pending_export"])
+def test_restore_does_not_override_other_states_or_pending_exports(api, database_connection, status):
+    from services.models import Import
+
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    upload_and_process(api, meeting["id"])
+    story = api.get(f"/api/boards/{board['id']}/stories").json()[0]
+    with Session(bind=database_connection, join_transaction_mode="create_savepoint") as session:
+        record = session.get(Story, story["id"])
+        record.status = "rejected" if status == "pending_export" else status
+        if status == "pending_export":
+            session.add(Import(story_id=record.id, idempotency_key=f"restore-test-{uuid4()}"))
+        session.commit()
+    response = api.post(f"/api/stories/{story['id']}/decision", json={"decision": "restore"})
+    assert response.status_code == 409
+    assert api.get(f"/api/stories/{story['id']}").json()["status"] == (
+        "rejected" if status == "pending_export" else status
+    )
+
+
 def test_draft_outcome_percentages_count_stories_once_and_exclude_other_boards(
     api, database_connection, pipeline_results,
 ):
@@ -280,7 +330,7 @@ def test_processing_claim_prevents_duplicate_job_and_upload(api, monkeypatch):
 
 
 def test_model_failure_records_failed_status_and_keeps_transcript(api, monkeypatch, pipeline_results):
-    def fail_after_transcribe(audio_path, model, save_stage, *, creativity="balanced"):
+    def fail_after_transcribe(audio_path, model, save_stage, *, creativity="balanced", board_context=None):
         save_stage("transcribe", pipeline_results[0])
         raise RuntimeError("Synthetic model failure")
 

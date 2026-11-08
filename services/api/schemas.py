@@ -70,7 +70,7 @@ class StoryEdit(RequestBody):
 
 
 class StoryDecision(RequestBody):
-    decision: Literal["accept", "reject"]
+    decision: Literal["accept", "reject", "restore"]
 
 
 class ImportCreate(RequestBody):

@@ -88,10 +88,17 @@ def decide_story(story_id: UUID, body: StoryDecision, session: SessionDep):
     check_pending_import(session, story)
     if story.status == "imported":
         raise HTTPException(status_code=409, detail="Imported stories cannot be reviewed here")
-    new_status = "accepted" if body.decision == "accept" else "rejected"
+    if body.decision == "restore":
+        if story.status not in {"rejected", "draft"}:
+            raise HTTPException(status_code=409, detail="Only rejected stories can be restored to drafts")
+        new_status = "draft"
+        event_type = "story_restored"
+    else:
+        new_status = "accepted" if body.decision == "accept" else "rejected"
+        event_type = f"story_{new_status}"
     if story.status != new_status:
         story.status = new_status
-        record_event(session, story, f"story_{new_status}")
+        record_event(session, story, event_type)
         session.commit()
         session.refresh(story)
     return story

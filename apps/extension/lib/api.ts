@@ -62,6 +62,7 @@ export async function registerBoard(cfg: ApiConfig, board: TrelloBoard): Promise
 
 interface MeetingWire {
   id: string;
+  board_id: string;
   title: string;
   status: 'uploaded' | 'processing' | 'completed' | 'failed';
   media_key: string | null;
@@ -100,9 +101,11 @@ export async function uploadMedia(cfg: ApiConfig, meetingId: string, audio: Blob
   await request(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/media`, { method: 'POST', form });
 }
 
-// The backend takes no options here. It uses its own GEMINI_MODEL, so the creativity and
-// model settings aren't sent anywhere yet.
+// Refresh the meeting's board, which may differ from the board currently selected
+// in Settings. A failed refresh stays visible so we don't silently use stale work.
 export async function startProcessing(cfg: ApiConfig, meetingId: string): Promise<void> {
+  const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
+  await request(cfg, `/api/boards/${encodeURIComponent(meeting.board_id)}/context/sync`, { method: 'POST' });
   await request(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/process`, { method: 'POST' });
 }
 
@@ -130,6 +133,7 @@ interface DraftWire {
   so_that: string;
   acceptance_criteria: string[];
   epic?: string | null;
+  related_story_ids?: string[];
   priority: Story['priority'];
   estimate?: number | null;
   needs_clarification: boolean;
@@ -216,7 +220,9 @@ function toStory(wire: StoryWire): Story {
     confidence: wire.confidence,
     qualityScore: wire.invest_score === null ? null : Math.round((wire.invest_score / 6) * 100),
     investChecks,
-    critique: critiqueText,
+    critique: draft.related_story_ids?.length
+      ? `${critiqueText}\nRelated existing work (check for overlap): ${draft.related_story_ids.join(', ')}`
+      : critiqueText,
     openQuestions: draft.needs_clarification ? ['The AI marked this story as needing clarification.'] : [],
     unsupportedAssumptions: flags.filter((f) => f.criterion === 'Grounded').map((f) => f.issue),
   };
@@ -271,7 +277,6 @@ export async function requestEdits(_cfg: ApiConfig, _storyId: string, _instructi
 
 // TODO: the backend only takes accept and reject, so there's no way to undo a rejection yet
 export async function decideStory(cfg: ApiConfig, storyId: string, decision: StoryDecision): Promise<Story> {
-  if (decision === 'restore') throw new Error('Restoring a rejected story is not supported by the backend yet.');
   const story = await request<StoryWire>(cfg, `/api/stories/${encodeURIComponent(storyId)}/decision`, {
     method: 'POST',
     json: { decision },

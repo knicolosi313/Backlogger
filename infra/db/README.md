@@ -17,6 +17,7 @@ The database name is `tsdb`; the application uses the `backlogger` schema inside
    ./infra/db/setup.ps1 -Action Apply
    ./infra/db/setup.ps1 -Action Apply -Migration 002_trello_connections.sql
    ./infra/db/setup.ps1 -Action Apply -Migration 003_jira_connections.sql
+   ./infra/db/setup.ps1 -Action Apply -Migration 004_story_context.sql
    ./infra/db/setup.ps1 -Action Check
    ```
 
@@ -38,6 +39,10 @@ Future changes should use new, numbered migrations.
 `-Migration` selects a specific migration; its default remains `001_initial.sql`.
 
 ## Initial storage
+
+Migration 004 adds `story_context`, a board-scoped cache of external work and
+per-story Gemini embeddings. See [board context](../../docs/BOARD_CONTEXT.md)
+for synchronization, retrieval, costs, and limits.
 
 - `boards`, `meetings`: board identity, media location, processing status.
 - `pipeline_outputs`: original `Transcript`, `ExtractionResult`, and `CritiqueResult`

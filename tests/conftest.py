@@ -8,6 +8,12 @@ from services.db import get_engine
 from services.worker.objects import CritiqueResult, ExtractionResult, Transcript
 
 
+@pytest.fixture(autouse=True)
+def disable_real_embeddings(monkeypatch):
+    """Tests opt into embeddings explicitly and supply a fake embedding client."""
+    monkeypatch.setenv("STORY_EMBEDDINGS_ENABLED", "false")
+
+
 @pytest.fixture
 def pipeline_results():
     transcript = Transcript.model_validate({

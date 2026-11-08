@@ -106,7 +106,7 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
 
           {isRejected && (
             <button disabled={busy} onClick={() => decide('restore')}>
-              Restore
+              Restore to drafts
             </button>
           )}
 

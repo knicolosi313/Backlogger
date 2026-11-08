@@ -41,6 +41,18 @@ class JiraClient:
     def get_project(self, cloud_id: str, project_id: str):
         return self._request("GET", self._site_path(cloud_id, f"project/{quote(project_id, safe='')}"))
 
+    def list_context_issues(self, cloud_id: str, project_id: str, next_page: str | None = None):
+        if not project_id.isascii() or not project_id.isdigit():
+            raise ValueError("Expected a numeric Jira project ID")
+        body = {
+            "jql": f"project = {project_id} ORDER BY updated DESC, key ASC",
+            "fields": ["summary", "description", "status", "issuetype", "parent"],
+            "maxResults": 100,
+        }
+        if next_page:
+            body["nextPageToken"] = next_page
+        return self._request("POST", self._site_path(cloud_id, "search/jql"), body=body)
+
     def list_issue_types(self, cloud_id: str, project_id: str, start_at: int = 0):
         path = f"issue/createmeta/{quote(project_id, safe='')}/issuetypes"
         return self._request("GET", self._site_path(cloud_id, path), params={"startAt": start_at, "maxResults": 50})

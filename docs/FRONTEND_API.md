@@ -1,5 +1,10 @@
 # Frontend board selection and exports
 
+Before processing audio, refresh the meeting's existing external work with
+`POST /api/boards/{board_id}/context/sync` using the connected account cookie.
+The extension already does this. See [board context](BOARD_CONTEXT.md) for epic
+names, related-story references, semantic retrieval, and limits.
+
 For Jira Cloud sites, projects, issue types, and exports, see
 [JIRA_CLOUD.md](JIRA_CLOUD.md). The following walkthrough describes Trello.
 
@@ -84,3 +89,13 @@ are 504, and rate limits are 503. Export POST errors retain the behavior documen
 in the export guide. No response includes the backend's key or token.
 
 Schemas for all endpoints are available in `/docs` and `/openapi.json`.
+
+## Restore a rejected story
+
+Call `POST /api/stories/{story_id}/decision` with `{"decision":"restore"}`.
+This returns the story to `draft`, preserving its content, scores, critique, and
+revision history. The extension's **Restore to drafts** button uses this action.
+Restoring an already restored draft is safe to retry without duplicate events.
+Accepted, imported, or needs-changes stories return 409, as do stories with a
+pending export. A successful transition records `story_restored` for analytics;
+the story leaves the rejected counts and can be reviewed again.

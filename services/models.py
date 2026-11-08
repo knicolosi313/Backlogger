@@ -90,6 +90,24 @@ class Story(Record, table=True):
     )
 
 
+class StoryContext(Record, table=True):
+    """Board-scoped context and reusable Gemini vectors, including external work."""
+
+    __tablename__ = "story_context"
+    __table_args__ = (
+        UniqueConstraint("board_id", "source", "external_id"),
+        {"schema": "backlogger"},
+    )
+
+    board_id: UUID = Field(foreign_key="backlogger.boards.id")
+    source: str = Field(sa_type=Text)
+    external_id: str = Field(sa_type=Text)
+    payload: dict[str, Any] = Field(sa_type=JSONB)
+    embedding: list[float] | None = Field(default=None, sa_type=JSONB(none_as_null=True))
+    embedding_model: str | None = Field(default=None, sa_type=Text)
+    content_hash: str | None = Field(default=None, sa_type=Text)
+
+
 class StoryRevision(Record, table=True):
     __tablename__ = "story_revisions"
     __table_args__ = (

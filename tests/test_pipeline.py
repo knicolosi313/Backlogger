@@ -72,6 +72,21 @@ def test_standalone_pipeline_returns_results_without_database(gemini, pipeline_r
     engine.assert_not_called()
 
 
+def test_board_context_reaches_extraction_and_critique_and_unknown_links_are_removed(gemini, pipeline_results):
+    board_context = {
+        "epic_names": ["Account access"],
+        "existing_stories": [{"source": "local", "id": "existing-story", "story": "Reset password"}],
+    }
+    pipeline_results[1].stories[0].related_story_ids = ["local:existing-story", "local:invented"]
+    load_context = Mock(return_value=board_context)
+    pipeline._run_pipeline("synthetic.wav", "test-model", board_context=load_context)
+    load_context.assert_called_once_with(pipeline_results[0])
+    for call in gemini.models.generate_content.call_args_list[1:]:
+        assert "Account access" in call.kwargs["contents"]
+        assert "existing-story" in call.kwargs["contents"]
+    assert pipeline_results[1].stories[0].related_story_ids == ["local:existing-story"]
+
+
 @pytest.mark.parametrize("filename, mime_type", [
     ("meeting.webm", "audio/webm"), ("MEETING.WEBM", "audio/webm"), ("meeting.m4a", "audio/mp4"),
 ])

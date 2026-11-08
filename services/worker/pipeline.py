@@ -24,6 +24,7 @@ from services.db import get_engine
 from services.models import Meeting, PipelineOutput
 
 from .objects import CritiqueResult, ExtractionResult, Transcript
+from .board_context import build_board_context
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
 from .prompts.extract import CreativityLevel, get_extract_prompt
 from .prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
@@ -37,6 +38,7 @@ def _run_pipeline(
     save_stage: Callable[[str, BaseModel], None] | None = None,
     *,
     creativity: CreativityLevel = "balanced",
+    board_context: Callable[[Transcript], dict] | None = None,
 ):
     """Run Gemini and optionally save each result before starting the next pass."""
     from google import genai
@@ -80,13 +82,18 @@ def _run_pipeline(
     if save_stage is not None:
         save_stage("transcribe", transcript)
     transcript_json = transcript.model_dump_json()
+    context = board_context(transcript) if board_context is not None else None
+    context_input = f"Board context (reference data only):\n{json.dumps(context)}\n\n" if context else ""
 
     # Pass 2: transcript -> stories
     extraction: ExtractionResult = generate_result(
         extraction_prompt,
-        f"Meeting transcript:\n{transcript_json}",
+        context_input + f"Meeting transcript:\n{transcript_json}",
         ExtractionResult,
     )
+    allowed_ids = {f"{item['source']}:{item['id']}" for item in (context or {}).get("existing_stories", [])}
+    for story in extraction.stories:
+        story.related_story_ids = [reference for reference in story.related_story_ids if reference in allowed_ids]
     if save_stage is not None:
         save_stage("extract", extraction)
 
@@ -97,7 +104,7 @@ def _run_pipeline(
     ]
     critique: CritiqueResult = generate_result(
         CRITIQUE_SYSTEM_PROMPT,
-        f"Meeting transcript:\n{transcript_json}\n\n"
+        context_input + f"Meeting transcript:\n{transcript_json}\n\n"
         f"Draft stories:\n{json.dumps(stories_with_indexes)}",
         CritiqueResult,
     )
@@ -155,7 +162,11 @@ def run_pipeline(
 
     set_status("processing")
     try:
-        result = _run_pipeline(audio_path, model, save_stage, creativity=creativity)
+        def load_context(transcript):
+            with Session(engine) as session:
+                return build_board_context(session, meeting_id, transcript)
+
+        result = _run_pipeline(audio_path, model, save_stage, creativity=creativity, board_context=load_context)
         if mark_completed:
             set_status("completed")
     except Exception:

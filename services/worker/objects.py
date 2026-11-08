@@ -30,6 +30,10 @@ class DraftStory(BaseModel):
         description="Proposed actionable implementation steps, separate from acceptance criteria",
     )
     epic: Optional[str] = None
+    related_story_ids: list[str] = Field(
+        default_factory=list,
+        description="Existing board references with overlapping scope, in source:id format; not automatic duplicates",
+    )
     priority: Literal["high", "med", "low"]
     estimate: Optional[int] = None
     needs_clarification: bool
