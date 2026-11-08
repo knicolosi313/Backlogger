@@ -1,3 +1,5 @@
+from ..timecode import format_clock
+
 # =============================================================================
 # PASS 1: TRANSCRIBE
 # =============================================================================
@@ -18,8 +20,8 @@ speaker-labeled transcript.
 ## Segments
 - Start a new segment whenever the speaker changes, or when one speaker talks
   for more than about 30 seconds.
-- start_s and end_s are seconds from the start of the recording. They must be
-  increasing and must not overlap.
+- start and end are clock times from the start of the recording in MM:SS
+  format, for example "02:14". They must be increasing and must not overlap.
 - Transcribe what was said. Remove filler words ("um", "uh", "like", false
   starts) but do not paraphrase, summarize, or fix someone's meaning.
 - Keep technical terms, product names, ticket numbers, and numbers exactly as
@@ -30,3 +32,17 @@ speaker-labeled transcript.
 ## Output
 Return only JSON that matches the provided schema. Do not add commentary.
 """.strip()
+
+
+def get_transcribe_prompt(duration_s: float | None = None) -> str:
+    """The prompt, plus the recording's real length when it is known.
+
+    Without the length the model has stretched long recordings to about 1.6x.
+    """
+    if not duration_s:
+        return TRANSCRIBE_SYSTEM_PROMPT
+    return (
+        f"{TRANSCRIBE_SYSTEM_PROMPT}\n\n## Recording length\n"
+        f"This recording is exactly {format_clock(round(duration_s))} long. "
+        "No start or end time may be later than that."
+    )

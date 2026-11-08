@@ -23,10 +23,14 @@ POST /api/boards/{board_id}/imports
 ```json
 {
   "story_id": "YOUR_STORY_UUID",
-  "list_id": "YOUR_TRELLO_LIST_ID",
-  "evidence_url": "https://your-app.example/meetings/YOUR_MEETING_UUID"
+  "list_id": "YOUR_TRELLO_LIST_ID"
 }
 ```
+
+Cards get no meeting link or attachment. The description ends with the quote and the
+time in the recording where it begins, for example
+`Source Quote: "like a settings page, our profile page where you can set your location on." (2:14)`.
+`evidence_url` is still accepted so older clients keep working, but it is ignored.
 
 `list_id` must be an open list on that board; choose your Triage list. Supply a
 real meeting or review-page URL. The backend does not yet serve a playback UI.
@@ -37,20 +41,23 @@ external card ID, status, and creation time. Inspect the request schema in `/doc
 
 1. Locks the story row and checks that it belongs to the target Trello board and
    has been accepted. Completed exports return their saved result immediately.
-2. Looks for an existing card with this import's exact marker line. Archived
-   cards are included. A recovered card is reused rather than overwritten.
+2. Looks for a card it already created for this story: same title and exactly the
+   description it generates. Archived cards are included, and cards already linked
+   to another story's import are skipped. A recovered card is reused rather than
+   overwritten. Nothing is added to cards to make them findable; the description
+   holds only the story. Cards made before this change ended with a
+   `Backlogger-Import-Key:` line, which is still recognized.
 3. Validates the target list when a new card is needed, and finds or creates the
    `AI Draft` label.
 4. Commits a pending import reservation before attempting card creation. The key
    stays stable for the story. Row locks serialize this service's exports of the
    same story; review routes block changes while an import is pending.
 5. Creates the card if appropriate, then immediately saves its ID. If adding a
-   label or evidence link fails, the ID is retained for the next request.
+   label fails, the ID is retained for the next request.
 6. Creates native `Acceptance Criteria` and `Solution Tasks (proposed)`
-   checklists, then adds the label and evidence link. On retry, existing
+   checklists, then adds the label. On retry, existing
    checklists are matched by name and items by exact text. Existing checked
-   states are preserved; missing items are added unchecked. Existing attachment
-   URLs are checked so a retry can recover an attachment whose response was lost.
+   states are preserved; missing items are added unchecked.
 7. Marks the import completed, marks the story imported, and records one
    `story_imported` analytics event together in a database transaction.
 
@@ -64,20 +71,20 @@ remote checklist/item requests still have no external exactly-once guarantee.
 
 Repeat the same request to reconcile an interrupted export. A completed export
 returns the original card ID without another Trello call or analytics event,
-even if the repeated request supplies a different list or evidence URL. Updating
+even if the repeated request supplies a different list. Updating
 an already-exported card is a separate feature.
 
 If a creation request times out, its result is unknown: the card could still
-appear later. The reservation stays pending. A retry searches for the marker;
-if it finds the card, it resumes the export. If it cannot find the card, it
+appear later. The reservation stays pending. A retry searches for the card;
+if it finds it, it resumes the export. If it cannot find the card, it
 returns 409 and does not create another one. A crash after reservation but before
 the POST has the same conservative behavior. Such an unresolved reservation
 requires manual reconciliation; there is no automatic reset/recreation endpoint.
 Do not interpret a missing search result alone as proof that creation failed.
 
 The database cannot atomically commit with Trello, so this is a reconciliation
-strategy rather than an external exactly-once guarantee. Deleting/changing card
-markers manually can prevent recovery.
+strategy rather than an external exactly-once guarantee. Renaming a card or
+editing its description before a pending export is retried can prevent recovery.
 
 Missing configuration returns 503; Trello request failures return a sanitized
 502 without exposing credentials. Unaccepted stories, non-Trello boards,
@@ -95,4 +102,4 @@ Remove-Item Env:RUN_DATABASE_TESTS
 
 All Trello calls are mocked. Database integration tests use synthetic data and
 roll back their outer transactions, including internally committed import steps.
-No live Trello cards, labels, or attachments are created during tests.
+No live Trello cards or labels are created during tests.

@@ -79,8 +79,8 @@ Use the database board UUID with the existing endpoints:
 
 ## Export and inspect the result
 
-Call `POST /api/boards/{database_board_id}/imports` with `story_id`, `list_id`,
-and `evidence_url`, as described in [TRELLO_EXPORTS.md](TRELLO_EXPORTS.md).
+Call `POST /api/boards/{database_board_id}/imports` with `story_id` and `list_id`,
+as described in [TRELLO_EXPORTS.md](TRELLO_EXPORTS.md).
 
 Two read-only endpoints let the UI inspect exports without creating or retrying
 anything, and without requiring Trello credentials or making Trello requests:
@@ -95,7 +95,7 @@ status, and creation times. History supports `status=pending|completed|failed`,
 `limit` (1–100, default 50), and `offset` (default 0).
 
 If export fails, inspect the saved status and offer a retry of the same POST.
-A pending import with an unknown card ID requires marker reconciliation;
+A pending import with an unknown card ID requires reconciliation by card title and text;
 the read endpoints deliberately do not change that state. The service does not
 blindly recreate a card when a previous creation result is uncertain.
 
@@ -115,3 +115,56 @@ Restoring an already restored draft is safe to retry without duplicate events.
 Accepted, imported, or needs-changes stories return 409, as do stories with a
 pending export. A successful transition records `story_restored` for analytics;
 the story leaves the rejected counts and can be reviewed again.
+
+## Request edits from the AI
+
+Call `POST /api/stories/{story_id}/request-edits` with plain-language instructions, for
+example `{"instructions": "Make the criteria more testable"}`. `model` is optional and
+must be one of `GET /api/models`; without it the server's default is used. The extension's
+**Request edits** button uses this action.
+
+The request makes several AI calls, so it can take up to a minute:
+
+1. Related work on the board is looked up for the story and the request (an embedding
+   call; if it fails, keyword matching is used instead).
+2. Gemini rewrites the story from the meeting transcript, the current draft, and the
+   instructions. If asked to split the story it returns up to four. Anything not asked for
+   is left as it was, and the instructions cannot make it invent quotes.
+3. Gemini reviews the result with the same INVEST review the first drafts get, so the
+   story's `confidence`, `invest_score`, and `critique` are for the revised draft instead of
+   being cleared like after a manual edit.
+4. Quote times are taken from where each quote is in the transcript.
+
+The response is `{"story", "new_stories", "summary"}`. `story` is the revised draft, back in
+`draft` status even if it had been accepted. `new_stories` holds the extra drafts when the
+request was a split; they belong to the same meeting. `summary` says what changed and
+anything that could not be done. Each rewrite is saved as a new revision with editor `ai`
+(`GET /api/stories/{id}/revisions`), and records `story_ai_edited` for analytics, plus
+`story_created` for each new draft.
+
+Nothing stays locked while the AI works. If the story is edited by someone else in the
+meantime, the request returns 409 and changes nothing. It also returns 409 for imported
+stories, stories with a pending export, and meetings with no transcript; 422 for empty or
+too-long (over 1000 characters) instructions or an unknown model; 503 when
+`GEMINI_API_KEY` is missing; and 502 if the AI's answer could not be used, with no
+provider details in the message.
+
+## Delete a rejected draft
+
+Call `DELETE /api/stories/{story_id}`. It answers 204 and only works on rejected stories
+(409 otherwise, and 409 while an export is pending). Deleting is a soft delete: the row, its
+revisions, and its analytics stay in the database, and `deleted_at` is set. Deleted stories are
+left out of `GET /api/boards/{board_id}/stories` (pass `include_deleted=true` to see them),
+analytics still count them, and they can no longer be edited, reviewed, restored, or sent for AI
+edits (409). Deleting an already deleted story is safe to repeat and records one
+`story_deleted` event. It needs migration `infra/db/005_story_soft_delete.sql`, which adds the
+nullable `stories.deleted_at` column.
+
+The extension offers this from a rejected story's page and from the multi-select bar in
+Drafts, where several drafts can also be accepted, imported, or rejected at once (one request
+per story, so a failure on one doesn't stop the rest).
+
+## Export history
+
+`GET /api/boards/{board_id}/imports`, `GET /api/stories/{story_id}/import`, and the export
+response include `story_title`, so history can name the story instead of showing its ID.

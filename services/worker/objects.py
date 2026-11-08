@@ -7,6 +7,18 @@ class TranscriptSegment(BaseModel):
     end_s: float
     text: str
 
+class ClockSegment(BaseModel):
+    """What Gemini returns for the transcript. It tells time better in MM:SS than in seconds."""
+
+    speaker: str = Field(description='Name if stated in the audio, otherwise "Speaker N"')
+    start: str = Field(description="When the segment starts, as MM:SS from the start of the recording")
+    end: str = Field(description="When the segment ends, as MM:SS from the start of the recording")
+    text: str
+
+class ClockTranscript(BaseModel):
+    language: str = Field(description='Main language spoken, e.g. "en"')
+    segments: list[ClockSegment]
+
 class Transcript(BaseModel):
     language: str = Field(description='Main language spoken, e.g. "en"')
     segments: list[TranscriptSegment]
@@ -53,6 +65,14 @@ class OpenQuestion(BaseModel):
     question: str
     related_story_title: Optional[str] = None
     start_s: Optional[float] = None
+
+class RevisionResult(BaseModel):
+    stories: list[DraftStory] = Field(
+        description="The revised story, or several stories when the reviewer asked to split it (at most four)"
+    )
+    summary: str = Field(
+        description="One or two sentences for the reviewer: what changed, and anything that could not be done"
+    )
 
 class ExtractionResult(BaseModel):
     stories: list[DraftStory]

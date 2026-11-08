@@ -7,9 +7,6 @@ export const CREATIVITY_OPTIONS: Array<{ value: Creativity; label: string; help:
   { value: 'exploratory', label: 'Exploratory', help: 'Reaches widely for many story ideas, edge cases, and extensions. Proposals need confirmation.' },
 ];
 
-// TODO: ask the backend which models it supports
-export const MODEL_OPTIONS = ['gemini-2.5-flash', 'gemini-2.5-pro'];
-
 export const PROCESSING_LABELS: Record<ProcessingStatus, string> = {
   awaiting_audio: 'No audio yet',
   queued: 'Waiting in line',

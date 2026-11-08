@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { decideStory, requestEdits, updateStory } from '@/lib/api';
+import { decideStory, deleteStory, requestEdits, updateStory } from '@/lib/api';
 import { formatClock } from '@/lib/format';
 import { INVEST_LABELS } from '@/lib/options';
 import { boardProvider } from '@/lib/provider';
-import type { Evidence, InvestCheck, Settings, Story, StoryDecision, StoryEdit } from '@/lib/types';
+import type { EditRequestResult, Evidence, InvestCheck, Settings, Story, StoryDecision, StoryEdit } from '@/lib/types';
 import { ConfidenceBadge, QualityBadge, StatusBadge } from './Badges';
+import { Icon } from './Icon';
 import { StoryEditForm } from './StoryEditForm';
 import { MeetingAudio } from './MeetingAudio';
 
@@ -12,19 +13,32 @@ interface Props {
   story: Story;
   settings: Settings;
   onChange: (story: Story) => void;
+  // a request to split this story adds new drafts that the list doesn't have yet
+  onStoriesAdded?: () => void;
+  // called after a rejected story is deleted, so the list can drop it
+  onDeleted?: () => void;
   onBack: () => void;
 }
 
-export function StoryDetail({ story, settings, onChange, onBack }: Props) {
+// What to tell the person after the AI changed their draft
+function describeEditResult(result: EditRequestResult): string {
+  const added = result.newStories.length;
+  const extra = added ? ` ${added} new ${added === 1 ? 'story was' : 'stories were'} added to your drafts.` : '';
+  return `${result.summary}${extra}`;
+}
+
+export function StoryDetail({ story, settings, onChange, onStoriesAdded, onDeleted, onBack }: Props) {
   const [mode, setMode] = useState<'view' | 'request-edits' | 'edit'>('view');
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   // run one backend call, show any error, pass the updated story up
   async function run(call: () => Promise<Story>) {
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       onChange(await call());
       setMode('view');
@@ -39,21 +53,38 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
   const saveEdit = (edit: StoryEdit) => run(() => updateStory(settings, story.id, edit));
   const sendEditRequest = () =>
     run(async () => {
-      const updated = await requestEdits(settings, story.id, instructions.trim());
+      const result = await requestEdits(settings, story.id, instructions.trim(), settings.model);
       setInstructions('');
-      return updated;
+      setNotice(describeEditResult(result));
+      if (result.newStories.length > 0) onStoriesAdded?.();
+      return result.story;
     });
+
+  // Deleting only hides the draft in the app. It stays in the database.
+  async function removeStory() {
+    if (!window.confirm('Delete this rejected draft? It will disappear from the app but stay in the database.')) return;
+    setBusy(true);
+    setError('');
+    try {
+      await deleteStory(settings, story.id);
+      onDeleted?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not delete this story.');
+      setBusy(false);
+    }
+  }
 
   const isFinished = story.status === 'imported';
   const isRejected = story.status === 'rejected';
 
   return (
     <div className="stack">
-      <button className="link" onClick={onBack}>
-        ← All stories
+      <button className="link back-link" onClick={onBack}>
+        <Icon name="back" size={15} />
+        All stories
       </button>
 
-      <header className="stack">
+      <header className="story-title-bar">
         <h2>{story.title}</h2>
         <div className="badges">
           <StatusBadge status={story.status} />
@@ -75,6 +106,11 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
       )}
 
       {error && <p className="status error" role="alert">{error}</p>}
+      {notice && mode === 'view' && (
+        <p className="note" role="status">
+          <strong>AI revised this story.</strong> {notice}
+        </p>
+      )}
 
       {mode === 'request-edits' && (
         <section className="card stack">
@@ -89,45 +125,60 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
           </label>
           <div className="row">
             <button className="primary" disabled={busy || !instructions.trim()} onClick={sendEditRequest}>
-              Send request
+              {busy ? 'Revising…' : 'Send request'}
             </button>
             <button disabled={busy} onClick={() => setMode('view')}>
               Cancel
             </button>
           </div>
+          {busy && (
+            <p className="hint" role="status">
+              The AI is rewriting the story and then checking it again. This can take up to a minute.
+            </p>
+          )}
         </section>
       )}
 
       {mode === 'view' && (
         <div className="actions">
           {isFinished && story.cardUrl && (
-            <a className="button" href={story.cardUrl} target="_blank" rel="noreferrer">
+            <a className="button primary" href={story.cardUrl} target="_blank" rel="noreferrer">
+              <Icon name="external" />
               {boardProvider(settings.selectedBoard) === 'jira' ? 'Open Jira issue' : 'Open Trello card'}
             </a>
           )}
 
           {isRejected && (
-            <button disabled={busy} onClick={() => decide('restore')}>
-              Restore to drafts
-            </button>
+            <>
+              <button disabled={busy} onClick={() => decide('restore')}>
+                Restore to drafts
+              </button>
+              <button className="danger" disabled={busy} onClick={removeStory}>
+                Delete
+              </button>
+            </>
           )}
 
           {!isFinished && !isRejected && (
             <>
               <button
-                className="primary"
+                className="accept"
                 disabled={busy || story.status === 'accepted'}
                 onClick={() => decide('accept')}
               >
+                <Icon name="check" />
                 {story.status === 'accepted' ? 'Accepted' : 'Accept'}
               </button>
               <button disabled={busy} onClick={() => setMode('request-edits')}>
+                <Icon name="comment" size={16} />
                 Request edits
               </button>
               <button disabled={busy} onClick={() => setMode('edit')}>
+                <Icon name="edit" size={16} />
                 Edit manually
               </button>
               <button className="danger" disabled={busy} onClick={() => decide('reject')}>
+                <Icon name="close" size={16} />
                 Reject
               </button>
             </>
@@ -142,10 +193,13 @@ function StoryBody({ story, settings }: { story: Story; settings: Settings }) {
   const [moment, setMoment] = useState<{ seconds: number; click: number } | null>(null);
   return (
     <>
-      <p>
-        <strong>As a</strong> {story.persona}, <strong>I want</strong> {story.goal}, <strong>so that</strong>{' '}
-        {story.benefit}.
-      </p>
+      <section className="stack">
+        <h3>User story</h3>
+        <p className="story-text">
+          <strong>As a</strong> {story.persona}, <strong>I want</strong> {story.goal}, <strong>so that</strong>{' '}
+          {story.benefit}.
+        </p>
+      </section>
 
       <p className="hint">
         Priority: {story.priority} · Points: {story.points ?? 'not estimated'}
@@ -165,7 +219,7 @@ function StoryBody({ story, settings }: { story: Story; settings: Settings }) {
 
       <section className="stack">
         <h3>Acceptance criteria</h3>
-        <ul className="bullets">
+        <ul className="criteria">
           {story.acceptanceCriteria.map((criterion) => (
             <li key={criterion}>{criterion}</li>
           ))}

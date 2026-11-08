@@ -8,7 +8,7 @@ import pytest
 from services.worker import board_context, pipeline
 from services.worker.objects import CritiqueResult, ExtractionResult, StoryRelationship
 from services.worker.scope_review import apply_scope_findings
-from services.worker.scope_review import missing_scope_checks
+from services.worker.scope_review import flag_unassessed_scope, missing_scope_checks
 
 
 @pytest.fixture
@@ -127,9 +127,24 @@ def test_each_neighbor_requires_a_scope_decision_even_if_it_is_independent(calcu
     assert missing_scope_checks(critique, context) == [{"story_index": 0, "existing_story_id": "trello:card1"}]
 
 
+def test_an_unassessed_board_match_flags_only_the_draft_and_unassessed_pairs_flag_both(calculator_case):
+    extraction, critique = calculator_case
+    flag_unassessed_scope(extraction, critique, [
+        {"story_index": 0, "existing_story_id": "trello:card1"},
+        {"story_index": 0, "other_story_index": 1},
+        {"story_index": 9, "other_story_index": 1},  # a review that doesn't exist is skipped, not a crash
+    ])
+    first, second = critique.reviews
+    assert [flag.issue.split(":")[0] for flag in first.flags] == [
+        "Scope not compared with trello", "Scope not compared with draft #1 \"Implement multiplication\"",
+    ]
+    assert len(second.flags) == 1  # only the real pair; the entries with a bad index are skipped
+    assert first.confidence <= 0.84 and first.invest_score < 6
+
+
 @pytest.mark.parametrize("complete_retry", [True, False])
 def test_pipeline_retries_missing_scope_checks_instead_of_silently_passing_them(
-    calculator_case, pipeline_results, monkeypatch, complete_retry,
+    calculator_case, pipeline_results, gemini_responses, monkeypatch, complete_retry,
 ):
     from google import genai
     extraction, critique = calculator_case
@@ -140,7 +155,7 @@ def test_pipeline_retries_missing_scope_checks_instead_of_silently_passing_them(
         )]
     client = Mock()
     client.files.upload.return_value = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
-    client.models.generate_content.side_effect = [SimpleNamespace(parsed=value) for value in (pipeline_results[0], extraction, critique, retried)]
+    client.models.generate_content.side_effect = [SimpleNamespace(parsed=value) for value in (gemini_responses[0].parsed, extraction, critique, retried)]
     monkeypatch.setattr(genai, "Client", Mock(return_value=client))
     get_context = lambda result: {"draft_pairs": [{"left_index": 0, "right_index": 1, "similarity": 0.96}]}
     saved = {}
@@ -151,13 +166,19 @@ def test_pipeline_retries_missing_scope_checks_instead_of_silently_passing_them(
         call()
         assert saved["critique"].reviews[1].flags[0].criterion == "Independent"
     else:
-        with pytest.raises(ValueError, match="omitted required"):
-            call()
-        assert "critique" not in saved
+        # still incomplete after the retry: keep the stories, but never pass the pair off as independent
+        call()
+        for review in saved["critique"].reviews:
+            assert review.flags[0].criterion == "Independent"
+            assert "Scope not compared with" in review.flags[0].issue
+            assert review.confidence <= 0.84
+        assert saved["critique"].reviews[0].invest_score < 6
     assert "previous review omitted" in client.models.generate_content.call_args.kwargs["contents"]
 
 
-def test_pipeline_supplies_embedding_pairs_and_saves_consistent_flags(calculator_case, pipeline_results, monkeypatch):
+def test_pipeline_supplies_embedding_pairs_and_saves_consistent_flags(
+    calculator_case, pipeline_results, gemini_responses, monkeypatch,
+):
     from google import genai
     extraction, critique = calculator_case
     critique.reviews[0].relationships = [StoryRelationship(
@@ -167,7 +188,7 @@ def test_pipeline_supplies_embedding_pairs_and_saves_consistent_flags(calculator
     monkeypatch.setattr(board_context, "embed_texts", Mock(return_value=[[1.0, 0.0], [0.96, 0.28]]))
     client = Mock()
     client.files.upload.return_value = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
-    client.models.generate_content.side_effect = [SimpleNamespace(parsed=value) for value in (pipeline_results[0], extraction, critique)]
+    client.models.generate_content.side_effect = [SimpleNamespace(parsed=value) for value in (gemini_responses[0].parsed, extraction, critique)]
     monkeypatch.setattr(genai, "Client", Mock(return_value=client))
     saved = {}
     _, _, result = pipeline._run_pipeline("synthetic.wav", "test-model", lambda stage, output: saved.update({stage: output.model_dump()}))

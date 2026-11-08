@@ -3,11 +3,12 @@ import { registerBoard } from '@/lib/api';
 import { openConnectTab } from '@/lib/connectTab';
 import { disconnectTrello, trelloConnectUrl } from '@/lib/trello';
 import { formatDateTime, formatPercent, isLocalhost } from '@/lib/format';
-import { CREATIVITY_OPTIONS, MODEL_OPTIONS } from '@/lib/options';
+import { CREATIVITY_OPTIONS } from '@/lib/options';
 import { boardProvider } from '@/lib/provider';
 import { DEFAULT_SETTINGS, forgetProvider, settingsItem } from '@/lib/storage';
 import type { Creativity, Settings, TrelloBoard, TrelloConnection, TrelloList } from '@/lib/types';
 import type { Loaded } from '@/lib/useLoad';
+import { Icon } from './Icon';
 import { JiraConnect, JiraPicker, type JiraState } from './JiraSettings';
 
 interface Props {
@@ -16,27 +17,43 @@ interface Props {
   boards: Loaded<TrelloBoard[]>;
   lists: { items?: TrelloList[]; error?: string; loading: boolean };
   jira: JiraState;
+  models: Loaded<ModelChoices | undefined>; // what the server offers, loaded in App
 }
 
-export function SettingsTab({ settings, connection, boards, lists, jira }: Props) {
+type ModelChoices = { default: string; models: string[] };
+
+export function SettingsTab({ settings, connection, boards, lists, jira, models }: Props) {
   const trelloConnected = connection.data?.connected === true;
   const jiraConnected = jira.connection.data?.connected === true;
+  // lives here, not in the form, because the Save button below belongs to the whole tab
+  const [saved, setSaved] = useState(false);
 
   return (
-    <div className="stack">
-      {trelloConnected && jiraConnected && (
-        <p className="note warn" role="alert">
-          Trello and Jira are both connected, but only one connection works at a time. Disconnect one of them.
-        </p>
-      )}
+    <div>
+      <div className="stack">
+        {trelloConnected && jiraConnected && (
+          <p className="note warn" role="alert">
+            Trello and Jira are both connected, but only one connection works at a time. Disconnect one of them.
+          </p>
+        )}
 
-      <TrelloConnect settings={settings} connection={connection} blocked={jiraConnected} />
-      <JiraConnect settings={settings} connection={jira.connection} blocked={trelloConnected} />
+        <TrelloConnect settings={settings} connection={connection} blocked={jiraConnected} />
+        <JiraConnect settings={settings} connection={jira.connection} blocked={trelloConnected} />
 
-      {trelloConnected && !jiraConnected && <TrelloPicker settings={settings} boards={boards} lists={lists} />}
-      {jiraConnected && !trelloConnected && <JiraPicker settings={settings} jira={jira} />}
+        {trelloConnected && !jiraConnected && <TrelloPicker settings={settings} boards={boards} lists={lists} />}
+        {jiraConnected && !trelloConnected && <JiraPicker settings={settings} jira={jira} />}
 
-      <SettingsForm settings={settings} />
+        <SettingsForm settings={settings} models={models} setSaved={setSaved} />
+      </div>
+
+      {/* Out of the grid above so it can stick to the bottom of the panel from anywhere in Settings.
+          It submits the settings form above by id. */}
+      <div className="sticky-bar">
+        <button className="primary" type="submit" form="settings-form">
+          <Icon name="check" />
+          {saved ? 'Saved' : 'Save settings'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -79,7 +96,10 @@ function TrelloConnect({
 
   return (
     <section className="card stack">
-      <h2>Trello</h2>
+      <h2 className="card-title">
+        <Icon name="link" size={20} />
+        Trello
+      </h2>
       {!status && !connection.error && <p className="hint">Checking your Trello connection…</p>}
 
       {status?.connected && (
@@ -129,7 +149,7 @@ function TrelloConnect({
 }
 
 // Board and list apply right away, there's no Save button for this part.
-function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection' | 'jira'>) {
+function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection' | 'jira' | 'models'>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const selected = settings.selectedBoard;
@@ -177,7 +197,10 @@ function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection' | 'j
 
   return (
     <section className="card stack">
-      <h2>Board</h2>
+      <h2 className="card-title">
+        <Icon name="board" size={20} />
+        Board
+      </h2>
       <p className="hint">Pick the board your meetings and imported stories belong to.</p>
 
       <label className="field">
@@ -231,9 +254,16 @@ function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection' | 'j
 
 // Everything else is saved with the Save button. Only its own fields are written, so it
 // can't undo a board or list picked above after the form loaded.
-function SettingsForm({ settings }: { settings: Settings }) {
+function SettingsForm({
+  settings,
+  models,
+  setSaved,
+}: {
+  settings: Settings;
+  models: Loaded<ModelChoices | undefined>;
+  setSaved: (saved: boolean) => void;
+}) {
   const [draft, setDraft] = useState(settings);
-  const [saved, setSaved] = useState(false);
 
   function change<K extends keyof Settings>(key: K, value: Settings[K]) {
     setSaved(false);
@@ -250,7 +280,8 @@ function SettingsForm({ settings }: { settings: Settings }) {
     await settingsItem.setValue({
       ...latest,
       creativity: draft.creativity,
-      model: draft.model,
+      // the choice came from the old server's list, so a different server starts on its default
+      model: serverChanged ? '' : model,
       autoImportThreshold: draft.autoImportThreshold,
       consentReminder: draft.consentReminder,
       apiUrl: draft.apiUrl,
@@ -271,10 +302,18 @@ function SettingsForm({ settings }: { settings: Settings }) {
 
   const creativityHelp = CREATIVITY_OPTIONS.find((o) => o.value === draft.creativity)?.help;
 
+  // The models the server allows. One it doesn't offer (App resets a saved one like that) counts
+  // as the default, so a stale copy of the form can't save it back.
+  const serverModels = models.data?.models ?? [];
+  const model = models.data && !serverModels.includes(draft.model) ? '' : draft.model;
+
   return (
-    <form className="stack" onSubmit={handleSubmit}>
+    <form id="settings-form" className="stack" onSubmit={handleSubmit}>
       <section className="card stack">
-        <h2>AI</h2>
+        <h2 className="card-title">
+          <Icon name="sparkle" size={20} />
+          AI
+        </h2>
         <label className="field">
           Creativity
           <select value={draft.creativity} onChange={(e) => change('creativity', e.target.value as Creativity)}>
@@ -288,16 +327,28 @@ function SettingsForm({ settings }: { settings: Settings }) {
         </label>
         <label className="field">
           Model
-          <select value={draft.model} onChange={(e) => change('model', e.target.value)}>
-            {MODEL_OPTIONS.map((model) => (
-              <option key={model}>{model}</option>
-            ))}
+          <select value={model} onChange={(e) => change('model', e.target.value)}>
+            <option value="">Server default{models.data ? ` (${models.data.default})` : ''}</option>
+            {/* until the server answers, a saved choice still has to show */}
+            {draft.model && !models.data && <option value={draft.model}>{draft.model}</option>}
+            {serverModels
+              .filter((model) => model !== models.data?.default)
+              .map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
           </select>
+          {models.loading && !models.data && <span className="hint">Loading models…</span>}
+          {models.error && <span className="hint">Could not load the model list. {models.error}</span>}
         </label>
       </section>
 
       <section className="card stack">
-        <h2>Auto-import</h2>
+        <h2 className="card-title">
+          <Icon name="sync" size={20} />
+          Auto-import
+        </h2>
         <label className="field">
           Minimum confidence: {formatPercent(draft.autoImportThreshold)}
           <input
@@ -318,19 +369,26 @@ function SettingsForm({ settings }: { settings: Settings }) {
       </section>
 
       <section className="card stack">
-        <h2>Recording</h2>
-        <label className="checkbox">
+        <h2 className="card-title">
+          <Icon name="video" size={20} />
+          Recording
+        </h2>
+        <label className="toggle-row">
+          <span>Ask me to confirm everyone consents before recording</span>
           <input
+            className="toggle"
             type="checkbox"
             checked={draft.consentReminder}
             onChange={(e) => change('consentReminder', e.target.checked)}
           />
-          Ask me to confirm everyone consents before recording
         </label>
       </section>
 
       <details className="card stack">
-        <summary>Server connection</summary>
+        <summary>
+          <Icon name="server" size={20} />
+          Server connection
+        </summary>
         <label className="field">
           API address
           <input value={draft.apiUrl} onChange={(e) => change('apiUrl', e.target.value)} />
@@ -344,10 +402,6 @@ function SettingsForm({ settings }: { settings: Settings }) {
           <input value={draft.webAppUrl} onChange={(e) => change('webAppUrl', e.target.value)} />
         </label>
       </details>
-
-      <button className="primary" type="submit">
-        {saved ? 'Saved' : 'Save settings'}
-      </button>
     </form>
   );
 }

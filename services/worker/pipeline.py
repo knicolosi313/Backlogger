@@ -11,6 +11,7 @@ validated automatically (response.parsed gives you the model object).
 """
 
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -23,12 +24,15 @@ from sqlmodel import Session
 from services.db import get_engine
 from services.models import Meeting, PipelineOutput
 
-from .objects import CritiqueResult, ExtractionResult, Transcript
+from .objects import ClockTranscript, CritiqueResult, ExtractionResult, Transcript
 from .board_context import build_board_context, build_review_context
-from .scope_review import apply_scope_findings, missing_scope_checks
+from .scope_review import apply_scope_findings, flag_unassessed_scope, missing_scope_checks
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
 from .prompts.extract import CreativityLevel, get_extract_prompt
-from .prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
+from .prompts.transcribe import get_transcribe_prompt
+from .timeline import anchor_sources, audio_seconds, to_transcript
+
+logger = logging.getLogger(__name__)
 
 # Explicit audio types for extensions Python's mimetypes labels as video.
 AUDIO_MIME_TYPES = {".webm": "audio/webm", ".mp4": "audio/mp4", ".m4a": "audio/mp4"}
@@ -75,11 +79,17 @@ def _run_pipeline(
         )
         return response.parsed
 
-    # Pass 1: audio -> transcript
-    transcript: Transcript = generate_result(
-        TRANSCRIBE_SYSTEM_PROMPT,
-        [audio_file, "Transcribe this meeting."],
-        Transcript,
+    # The model can't be trusted to know how long the recording is, so measure it.
+    duration = audio_seconds(client, model, audio_file)
+
+    # Pass 1: audio -> transcript. Times come back as MM:SS and are checked against the real length.
+    transcript: Transcript = to_transcript(
+        generate_result(
+            get_transcribe_prompt(duration),
+            [audio_file, "Transcribe this meeting."],
+            ClockTranscript,
+        ),
+        duration,
     )
     if save_stage is not None:
         save_stage("transcribe", transcript)
@@ -93,6 +103,8 @@ def _run_pipeline(
         context_input + f"Meeting transcript:\n{transcript_json}",
         ExtractionResult,
     )
+    # Quote times come from where the quote is in the transcript, not from numbers the model copied.
+    anchor_sources(extraction.stories, transcript, duration)
     allowed_ids = {f"{item['source']}:{item['id']}" for item in (context or {}).get("existing_stories", [])}
     for story in extraction.stories:
         story.related_story_ids = [reference for reference in story.related_story_ids if reference in allowed_ids]
@@ -121,7 +133,13 @@ def _run_pipeline(
         if not missing:
             break
         if attempt == 1:
-            raise ValueError("Critique omitted required embedding scope comparisons")
+            # Don't fail the whole meeting over an advisory check. Flag what wasn't compared.
+            logger.warning(
+                "Critique still omitted %d scope comparison(s) after a retry; flagging those stories for manual review",
+                len(missing),
+            )
+            flag_unassessed_scope(extraction, critique, missing)
+            break
         critique_input = (
             "The previous review omitted scope comparisons. Return a complete review "
             "for every draft, explicitly assessing these references in relationships "

@@ -88,6 +88,8 @@ class Story(Record, table=True):
         sa_type=DateTime(timezone=True),
         sa_column_kwargs={"server_default": text("now()"), "onupdate": utc_now},
     )
+    # Set when a rejected draft is deleted in the app. The row, its history and analytics stay.
+    deleted_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class StoryContext(Record, table=True):

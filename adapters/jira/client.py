@@ -6,6 +6,7 @@ from uuid import UUID
 import requests
 
 from services.worker.objects import DraftStory
+from services.worker.timecode import format_clock
 
 
 class JiraClient:
@@ -75,12 +76,12 @@ class JiraClient:
         return issues[0] if issues else None
 
     @staticmethod
-    def format_story(story: DraftStory, evidence_url: str) -> dict:
+    def format_story(story: DraftStory) -> dict:
         lines = [
             f"As a {story.as_a}, I want {story.i_want} so that {story.so_that}",
             f"Priority: {story.priority}",
-            f"Source: {story.source.speaker}, {story.source.start_s}–{story.source.end_s}s",
-            story.source.quote,
+            # Only when the quote begins, like a video player shows it: (2:14)
+            f'Source Quote: "{story.source.quote}" ({format_clock(story.source.start_s)})',
         ]
         if story.estimate is not None:
             lines.append(f"Estimate: {story.estimate} points")
@@ -98,10 +99,6 @@ class JiraClient:
                     {"type": "text", "text": f"☐ {item}"},
                 ]}]} for item in items
             ]})
-        content.append({"type": "paragraph", "content": [{
-            "type": "text", "text": "Meeting evidence",
-            "marks": [{"type": "link", "attrs": {"href": evidence_url}}],
-        }]})
         return {"type": "doc", "version": 1, "content": content}
 
     def create_issue(self, cloud_id: str, fields: dict):

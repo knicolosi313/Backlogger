@@ -93,10 +93,25 @@ class AutoImportStatus(BaseModel):
 class ProcessOptions(RequestBody):
     creativity: CreativityLevel | None = None
     auto_import: AutoImportOptions | None = None
+    # Must be one of GET /api/models. Omit it to use the server's default model.
+    model: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class ModelChoices(BaseModel):
+    default: str
+    models: list[str]
 
 
 class StoryEdit(RequestBody):
     draft: DraftStory
+
+
+class EditRequest(RequestBody):
+    """Ask the AI to change a draft. Say what to change in plain words."""
+
+    instructions: str = Field(min_length=1, max_length=1000)
+    # One of GET /api/models. Omit it to use the server's default model.
+    model: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class StoryDecision(RequestBody):
@@ -106,7 +121,8 @@ class StoryDecision(RequestBody):
 class ImportCreate(RequestBody):
     story_id: UUID
     list_id: str = Field(min_length=1, max_length=255)
-    evidence_url: HttpUrl
+    # No longer used: cards get no meeting link. Still accepted so older clients keep working.
+    evidence_url: HttpUrl | None = None
 
 
 class ImportRead(BaseModel):
@@ -118,6 +134,8 @@ class ImportRead(BaseModel):
     external_card_id: str | None
     status: Literal["pending", "completed", "failed"]
     created_at: datetime
+    # Filled in when reading export history, so a record can say which story it is for.
+    story_title: str | None = None
 
 
 class JiraConnectionComplete(RequestBody):
@@ -168,7 +186,8 @@ class JiraIssueTypePage(BaseModel):
 class JiraImportCreate(RequestBody):
     story_id: UUID
     issue_type_id: str = Field(pattern=r"^[0-9]+$")
-    evidence_url: HttpUrl
+    # No longer used: issues get no meeting link. Still accepted so older clients keep working.
+    evidence_url: HttpUrl | None = None
     additional_fields: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("additional_fields")
@@ -192,6 +211,13 @@ class StoryRead(BaseModel):
     critique: StoryReview | None
     created_at: datetime
     updated_at: datetime
+
+
+class EditRequestResult(BaseModel):
+    story: StoryRead
+    # Extra stories when the request was to split the draft. They are new drafts on the same meeting.
+    new_stories: list[StoryRead]
+    summary: str
 
 
 class DailyAnalytics(BaseModel):

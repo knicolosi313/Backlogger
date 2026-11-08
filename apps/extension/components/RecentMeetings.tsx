@@ -5,6 +5,7 @@ import { PROCESSING_LABELS } from '@/lib/options';
 import { PICK_DESTINATION_HINT } from '@/lib/provider';
 import type { BoardConnection, Settings } from '@/lib/types';
 import { useLoad } from '@/lib/useLoad';
+import { Icon } from './Icon';
 import { MeetingAudio } from './MeetingAudio';
 
 interface Props {
@@ -23,8 +24,11 @@ export function RecentMeetings({ settings, board, refreshKey }: Props) {
   const recent = meetings.data?.slice(0, 5) ?? [];
 
   return (
-    <section className="stack">
-      <h2>Recent meetings</h2>
+    <section className="card stack">
+      <h2 className="card-title">
+        <Icon name="clock" size={20} />
+        Recent meetings
+      </h2>
       {!board.connected && <p className="hint">{PICK_DESTINATION_HINT} to see your meetings.</p>}
       {board.connected && <>
         {meetings.error && <p className="status error" role="alert">{meetings.error}</p>}
@@ -40,9 +44,10 @@ export function RecentMeetings({ settings, board, refreshKey }: Props) {
                 aria-controls={selected === meeting.id ? playerId : undefined}
                 onClick={() => setSelected((current) => current === meeting.id ? null : meeting.id)}
               >
-                <strong>{meeting.title}</strong>
-                <span className="hint">{formatShortDate(meeting.startedAt)} · {PROCESSING_LABELS[meeting.status]}</span>
-                <span className="hint">{!meeting.hasAudio ? 'No audio uploaded' : selected === meeting.id ? 'Hide audio' : 'Play audio'}</span>
+                <span className="play-btn" aria-hidden="true"><Icon name="play" size={14} /></span>
+                <strong className="meeting-title">{meeting.title}</strong>
+                <span className="hint meeting-meta">{formatShortDate(meeting.startedAt)} · {PROCESSING_LABELS[meeting.status]}</span>
+                <span className="hint meeting-action">{!meeting.hasAudio ? 'No audio uploaded' : selected === meeting.id ? 'Hide audio' : 'Play audio'}</span>
               </button>
               {selected === meeting.id && meeting.hasAudio && (
                 <div id={playerId} className="stack">

@@ -4,6 +4,7 @@ import type {
   BoardAnalytics,
   Creativity,
   ExportRecord,
+  EditRequestResult,
   ExportStatus,
   ImportResult,
   InvestCheck,
@@ -120,7 +121,13 @@ export async function uploadMedia(cfg: ApiConfig, meetingId: string, audio: Blob
 // Refresh the meeting's board, which may differ from the board currently selected
 // in Settings. A failed refresh stays visible so we don't silently use stale work.
 // Processing snapshots auto-import settings; the backend keeps working if the panel closes.
-export async function startProcessing(cfg: Settings, meetingId: string, creativity: Creativity): Promise<void> {
+// An empty `model` means the person didn't pick one, so the backend uses its own default.
+export async function startProcessing(
+  cfg: Settings,
+  meetingId: string,
+  creativity: Creativity,
+  model = '',
+): Promise<void> {
   const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
   let autoImport: Record<string, unknown> | undefined;
   if (cfg.autoImport) {
@@ -142,7 +149,7 @@ export async function startProcessing(cfg: Settings, meetingId: string, creativi
   await request(cfg, `/api/boards/${encodeURIComponent(meeting.board_id)}/context/sync`, { method: 'POST' });
   await request(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/process`, {
     method: 'POST',
-    json: { creativity, ...(autoImport ? { auto_import: autoImport } : {}) },
+    json: { creativity, ...(model ? { model } : {}), ...(autoImport ? { auto_import: autoImport } : {}) },
   });
 }
 
@@ -150,6 +157,10 @@ export function getMeetingAudio(cfg: ApiConfig, meetingId: string, signal?: Abor
   return request<Blob>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/audio`, {
     responseType: 'blob', signal,
   });
+}
+
+export async function getModels(cfg: ApiConfig): Promise<{ default: string; models: string[] }> {
+  return request<{ default: string; models: string[] }>(cfg, '/api/models');
 }
 
 export async function getProcessingStatus(cfg: ApiConfig, meetingId: string): Promise<ProcessingStatus> {
@@ -333,12 +344,32 @@ export async function updateStory(cfg: ApiConfig, storyId: string, edit: StoryEd
   return toStory(await request<StoryWire>(cfg, path, { method: 'PATCH', json: { draft: merged } }));
 }
 
-// TODO: no endpoint for this yet
-export async function requestEdits(_cfg: ApiConfig, _storyId: string, _instructions: string): Promise<Story> {
-  throw new Error('Requesting edits from the AI is not available yet. Use "Edit manually" for now.');
+interface EditRequestWire {
+  story: StoryWire;
+  new_stories: StoryWire[];
+  summary: string;
 }
 
-// TODO: the backend only takes accept and reject, so there's no way to undo a rejection yet
+// Asks the AI to rewrite the draft, then review the result again. That's several AI calls on the
+// server, so it can take a while. An empty `model` means the server's default.
+export async function requestEdits(
+  cfg: ApiConfig,
+  storyId: string,
+  instructions: string,
+  model: string,
+): Promise<EditRequestResult> {
+  const wire = await request<EditRequestWire>(cfg, `/api/stories/${encodeURIComponent(storyId)}/request-edits`, {
+    method: 'POST',
+    json: { instructions, ...(model ? { model } : {}) },
+  });
+  return { story: toStory(wire.story), newStories: wire.new_stories.map(toStory), summary: wire.summary };
+}
+
+// Only rejected drafts can be deleted. They disappear from the app but stay in the database.
+export async function deleteStory(cfg: ApiConfig, storyId: string): Promise<void> {
+  await request(cfg, `/api/stories/${encodeURIComponent(storyId)}`, { method: 'DELETE' });
+}
+
 export async function decideStory(cfg: ApiConfig, storyId: string, decision: StoryDecision): Promise<Story> {
   const story = await request<StoryWire>(cfg, `/api/stories/${encodeURIComponent(storyId)}/decision`, {
     method: 'POST',
@@ -348,11 +379,6 @@ export async function decideStory(cfg: ApiConfig, storyId: string, decision: Sto
 }
 
 // ---- importing to Trello ----
-
-// The link attached to each card, which opens the meeting at that moment
-export function momentUrl(webAppUrl: string, meetingId: string, seconds: number): string {
-  return `${webAppUrl.replace(/\/+$/, '')}/meetings/${meetingId}?t=${Math.floor(seconds)}`;
-}
 
 // The values for the project's required fields, built from what was saved in Settings. The
 // field list is fetched fresh so a change on the Jira side is noticed before any story is sent.
@@ -404,7 +430,6 @@ export async function importStories(settings: Settings, stories: Story[]): Promi
         json: {
           story_id: story.id,
           ...destination,
-          evidence_url: momentUrl(settings.webAppUrl, story.meetingId, story.evidence[0]?.startSeconds ?? 0),
         },
       });
       results.push({
@@ -463,12 +488,14 @@ interface ImportWire {
   external_card_id: string | null;
   status: ExportStatus;
   created_at: string;
+  story_title?: string | null;
 }
 
 function toExportRecord(record: ImportWire): ExportRecord {
   return {
     id: record.id,
     storyId: record.story_id,
+    storyTitle: record.story_title ?? null,
     idempotencyKey: record.idempotency_key,
     externalCardId: record.external_card_id,
     status: record.status,

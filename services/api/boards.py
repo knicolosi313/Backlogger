@@ -37,10 +37,14 @@ def import_story(
     if isinstance(body, JiraImportCreate):
         if not isinstance(client, JiraClient):
             raise HTTPException(status_code=409, detail="Jira export fields require a Jira board")
-        return export_jira_story(session, client, board_id, body)
-    if not isinstance(client, TrelloClient):
-        raise HTTPException(status_code=409, detail="Trello export fields require a Trello board")
-    return export_story(session, client, board_id, body)
+        result = export_jira_story(session, client, board_id, body)
+    else:
+        if not isinstance(client, TrelloClient):
+            raise HTTPException(status_code=409, detail="Trello export fields require a Trello board")
+        result = export_story(session, client, board_id, body)
+    # Name the story like the export history does, so every response about an export reads the same.
+    story = session.get(Story, result.story_id)
+    return result.model_copy(update={"story_title": story.draft.get("title") if story else None})
 
 
 @router.get("/{board_id}/imports", response_model=list[ImportRead])
@@ -54,15 +58,16 @@ def list_imports(
     """Read export history, including attempts that still need reconciliation."""
     get_record(session, Board, board_id)
     query = (
-        select(Import).join(Story, Import.story_id == Story.id)
+        select(Import, Story.draft["title"].astext).join(Story, Import.story_id == Story.id)
         .join(Meeting, Story.meeting_id == Meeting.id)
         .where(Meeting.board_id == board_id)
     )
     if status is not None:
         query = query.where(Import.status == status)
-    return session.exec(
+    rows = session.exec(
         query.order_by(Import.created_at.desc(), Import.id).offset(offset).limit(limit)
     ).all()
+    return [ImportRead.model_validate(record).model_copy(update={"story_title": title}) for record, title in rows]
 
 
 @router.post("", response_model=Board, status_code=201)
@@ -96,11 +101,15 @@ def list_stories(
     session: SessionDep,
     status: StoryStatus | None = None,
     meeting_id: UUID | None = None,
+    include_deleted: bool = False,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
     get_record(session, Board, board_id)
     query = select(Story).join(Meeting).where(Meeting.board_id == board_id)
+    if not include_deleted:
+        # Deleted drafts are hidden here but still counted in analytics and kept in the database.
+        query = query.where(Story.deleted_at.is_(None))
     if meeting_id is not None:
         query = query.where(Story.meeting_id == meeting_id)
     if status is not None:

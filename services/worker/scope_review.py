@@ -22,20 +22,55 @@ def missing_scope_checks(critique, context):
     return missing
 
 
+_INVEST_CRITERIA = {"Independent", "Negotiable", "Valuable", "Estimable", "Small", "Testable"}
+
+
+def _flag_independent(review, issue):
+    """Add an Independent flag once and keep the score and confidence consistent with it."""
+    if not any(item.criterion == "Independent" and item.issue == issue for item in review.flags):
+        review.flags.append(InvestFlag(criterion="Independent", issue=issue))
+    failures = {item.criterion for item in review.flags} & _INVEST_CRITERIA
+    review.invest_score = min(review.invest_score, 6 - len(failures))
+    review.confidence = min(review.confidence, 0.84)
+
+
+def flag_unassessed_scope(extraction, critique, missing):
+    """Mark stories whose required scope comparisons the review never made.
+
+    The model sometimes skips comparisons even after being asked again. That must not
+    pass silently as "independent", but it also shouldn't throw away a whole meeting.
+    The flag fails the Independent check, so these stories are never auto-imported and a
+    person is told to check them for overlap.
+    """
+    reviews = {review.index: review for review in critique.reviews}
+    count = len(extraction.stories)
+    for item in missing:
+        left, other = item["story_index"], item.get("other_story_index")
+        # a missing draft pair affects both drafts, a missing board match only the draft
+        sides = [(left, other), (other, left)] if other is not None else [(left, item["existing_story_id"])]
+        for index, against in sides:
+            review = reviews.get(index)
+            if review is None or not 0 <= index < count:
+                continue
+            if isinstance(against, int):
+                if not 0 <= against < count:
+                    continue
+                against = f'draft #{against} "{extraction.stories[against].title}"'
+            _flag_independent(
+                review,
+                f"Scope not compared with {against}: the automated review did not assess this overlap. "
+                "Check it manually before accepting.",
+            )
+
+
 def apply_scope_findings(extraction, critique, review_context, board_context=None):
     reviews = {review.index: review for review in critique.reviews}
     allowed_board_ids = {
         f"{item['source']}:{item['id']}" for item in (board_context or {}).get("existing_stories", [])
     } | {item["reference"] for item in review_context.get("board_matches", [])}
-    criteria = {"Independent", "Negotiable", "Valuable", "Estimable", "Small", "Testable"}
 
     def flag(review, reference, reason):
-        issue = f"Scope conflict with {reference}: {reason}"
-        if not any(item.criterion == "Independent" and item.issue == issue for item in review.flags):
-            review.flags.append(InvestFlag(criterion="Independent", issue=issue))
-        failures = {item.criterion for item in review.flags} & criteria
-        review.invest_score = min(review.invest_score, 6 - len(failures))
-        review.confidence = min(review.confidence, 0.84)
+        _flag_independent(review, f"Scope conflict with {reference}: {reason}")
 
     for review in critique.reviews:
         if not 0 <= review.index < len(extraction.stories):

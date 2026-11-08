@@ -53,7 +53,7 @@ def jira_export(database_connection, pipeline_results):
             yield SimpleNamespace(
                 api=api, client=client, cloud_id=cloud_id, board_id=board_id, story_id=story_id,
                 url=f"/api/boards/{board_id}/imports", session=new_session,
-                body={"story_id": str(story_id), "issue_type_id": "10002", "evidence_url": "https://example.com/meeting"},
+                body={"story_id": str(story_id), "issue_type_id": "10002"},
             )
     finally:
         app.dependency_overrides = previous
@@ -70,7 +70,8 @@ def test_export_creates_issue_and_repeat_returns_saved_key(jira_export):
     assert fields["issuetype"] == {"id": "10002"}
     assert f"backlogger-story-{case.story_id}" in fields["labels"]
     assert fields["description"]["type"] == "doc"
-    assert "https://example.com/meeting" in str(fields["description"])
+    assert 'Source Quote: "' in str(fields["description"]) and "(0:02)" in str(fields["description"])
+    assert "Meeting evidence" not in str(fields["description"])
     assert case.api.post(case.url, json=case.body).json() == first.json()
     case.client.create_issue.assert_called_once()
     with case.session() as session:
@@ -162,3 +163,11 @@ def test_provider_resolver_uses_jira_connection(jira_export, monkeypatch):
         assert export_clients.get_export_client(case.board_id, Mock(), session) is case.client
     jira.assert_called_once()
     trello.assert_not_called()
+
+
+def test_older_clients_may_still_send_an_evidence_link_but_it_is_not_used(jira_export):
+    case = jira_export
+    body = {**case.body, "evidence_url": "https://example.com/meeting"}
+    assert case.api.post(case.url, json=body).status_code == 200
+    fields = case.client.create_issue.call_args.args[1]
+    assert "example.com" not in str(fields["description"])

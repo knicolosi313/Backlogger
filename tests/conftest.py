@@ -1,11 +1,13 @@
 """Shared synthetic data and opt-in database access."""
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
 from services.db import get_engine
-from services.worker.objects import CritiqueResult, ExtractionResult, Transcript
+from services.worker.objects import ClockSegment, ClockTranscript, CritiqueResult, ExtractionResult, Transcript
+from services.worker.timecode import format_clock
 
 
 @pytest.fixture(autouse=True)
@@ -64,3 +66,17 @@ def database_connection():
             yield connection
         finally:
             transaction.rollback()
+
+
+@pytest.fixture
+def gemini_responses(pipeline_results):
+    """What Gemini returns for each pass. The transcript pass answers in MM:SS, not seconds."""
+    transcript, *later_passes = pipeline_results
+    clock = ClockTranscript(language=transcript.language, segments=[
+        ClockSegment(
+            speaker=segment.speaker, start=format_clock(segment.start_s),
+            end=format_clock(segment.end_s), text=segment.text,
+        )
+        for segment in transcript.segments
+    ])
+    return [SimpleNamespace(parsed=result) for result in (clock, *later_passes)]

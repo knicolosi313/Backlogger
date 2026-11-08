@@ -53,7 +53,7 @@ def test_context_excludes_other_boards_rejected_and_current_meeting(board_data, 
 
 
 def test_saved_meeting_loads_board_context_after_transcription(
-    board_data, database_connection, pipeline_results, monkeypatch,
+    board_data, database_connection, pipeline_results, gemini_responses, monkeypatch,
 ):
     from google import genai
     from services.worker import pipeline
@@ -61,7 +61,7 @@ def test_saved_meeting_loads_board_context_after_transcription(
     _, _, meeting, story = board_data
     client = Mock()
     client.files.upload.return_value = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
-    client.models.generate_content.side_effect = [SimpleNamespace(parsed=result) for result in pipeline_results]
+    client.models.generate_content.side_effect = gemini_responses
     monkeypatch.setattr(genai, "Client", Mock(return_value=client))
     monkeypatch.setattr(pipeline, "Session", lambda *args: Session(
         bind=database_connection, join_transaction_mode="create_savepoint",

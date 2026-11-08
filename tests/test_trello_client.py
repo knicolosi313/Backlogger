@@ -31,12 +31,9 @@ def client():
     ("create_label", ("board-1", "AI Draft", "yellow"), "POST", "labels",
      {"idBoard": "board-1", "name": "AI Draft", "color": "yellow"}),
     ("add_label", ("card-1", "label-1"), "POST", "cards/card-1/idLabels", {"value": "label-1"}),
-    ("list_attachments", ("card-1",), "GET", "cards/card-1/attachments", {}),
     ("list_checklists", ("card-1",), "GET", "cards/card-1/checklists", {"checkItems": "all"}),
     ("create_checklist", ("card-1", "Acceptance Criteria"), "POST", "cards/card-1/checklists", {"name": "Acceptance Criteria"}),
     ("add_checklist_item", ("checklist-1", "Verify result"), "POST", "checklists/checklist-1/checkItems", {"name": "Verify result", "checked": "false"}),
-    ("attach_evidence_link", ("card-1", "https://example.com/meeting/1", "Source"),
-     "POST", "cards/card-1/attachments", {"url": "https://example.com/meeting/1", "name": "Source"}),
 ])
 def test_methods_send_the_right_request(client, http, method, args, verb, path, parameters):
     request, response = http
@@ -49,43 +46,63 @@ def test_methods_send_the_right_request(client, http, method, args, verb, path, 
     response.raise_for_status.assert_called_once()
 
 
-def test_card_payload_contains_exact_import_marker(client, http):
+def test_card_description_is_sent_exactly_as_given(client, http):
     request, _ = http
-    client.create_card("list-1", "Reset password", "Description\n", idempotency_key="story-1")
+    client.create_card("list-1", "Reset password", "Description\n")
     assert request.call_args.kwargs["json"] == {
-        "idList": "list-1", "name": "Reset password",
-        "desc": "Description\n\nBacklogger-Import-Key: story-1",
+        "idList": "list-1", "name": "Reset password", "desc": "Description\n",
     }
     assert "desc" not in request.call_args.kwargs["params"]
 
 
-def test_card_without_import_key_keeps_description(client, http):
-    client.create_card("list-1", "Title", "Description\n")
-    assert http[0].call_args.kwargs["json"]["desc"] == "Description\n"
-
-
-@pytest.mark.parametrize("key", ["", " ", "first\nsecond", "first\rsecond"])
-def test_invalid_import_key_never_creates_a_card(client, http, key):
-    with pytest.raises(ValueError, match="single line"):
-        client.create_card("list-1", "Title", "Description", idempotency_key=key)
+def test_cards_are_never_created_with_an_import_key_in_the_description(client, http):
+    with pytest.raises(TypeError):
+        client.create_card("list-1", "Title", "Description", idempotency_key="story-1")
     http[0].assert_not_called()
 
 
-def test_import_lookup_matches_whole_line_and_includes_archived_cards(client, http):
+def test_existing_card_is_found_by_title_and_description_including_archived(client, http):
     request, response = http
-    match = {"id": "archived-card", "closed": True, "desc": "Text\nBacklogger-Import-Key: story-1\n"}
+    description = "As a user, I want X so that Y\n\nSource Quote:\n\"quote\"\n"
+    match = {"id": "archived-card", "closed": True, "name": "Reset password", "desc": description}
     response.json.return_value = [
-        {"id": "wrong", "desc": "Backlogger-Import-Key: story-10"},
-        {"id": "inline", "desc": "Text Backlogger-Import-Key: story-1"},
+        {"id": "other-title", "name": "Something else", "desc": description},
+        {"id": "other-text", "name": "Reset password", "desc": description + "edited"},
         match,
     ]
-    assert client.find_import_by_key("board-1", "story-1") == match
+    assert client.find_existing_card("board-1", "Reset password", description) == match
     assert request.call_args.kwargs["params"]["filter"] == "all"
 
 
-def test_import_lookup_returns_none_when_missing(client, http):
-    http[1].json.return_value = [{"id": "card-without-description"}]
-    assert client.find_import_by_key("board-1", "story-1") is None
+def test_card_match_ignores_trailing_whitespace_and_windows_line_endings(client, http):
+    stored = {"id": "card-1", "name": "Title", "desc": "Line one\r\nLine two  \r\n\r\n"}
+    http[1].json.return_value = [stored]
+    assert client.find_existing_card("board-1", "Title", "Line one\nLine two") == stored
+
+
+def test_cards_linked_to_other_imports_are_never_matched(client, http):
+    twin = {"id": "taken", "name": "Title", "desc": "Same text"}
+    free = {"id": "free", "name": "Title", "desc": "Same text"}
+    http[1].json.return_value = [twin, free]
+    assert client.find_existing_card("board-1", "Title", "Same text", exclude_ids={"taken"}) == free
+    assert client.find_existing_card("board-1", "Title", "Same text", exclude_ids={"taken", "free"}) is None
+
+
+def test_cards_made_with_the_old_import_key_are_still_recognized(client, http):
+    old = {"id": "old-card", "name": "Title", "desc": "Text\n\nBacklogger-Import-Key: story-1"}
+    edited = {"id": "edited-card", "name": "Renamed", "desc": "Changed\nBacklogger-Import-Key: story-2\n"}
+    wrong = {"id": "wrong", "name": "Title", "desc": "Text Backlogger-Import-Key: story-1"}
+    http[1].json.return_value = [wrong, old, edited]
+    assert client.find_existing_card("board-1", "Title", "Text\n", legacy_key="story-1") == old
+    # the old marker line alone is enough, even if the card was renamed and edited afterwards
+    assert client.find_existing_card("board-1", "Title", "Text\n", legacy_key="story-2") == edited
+    # without a legacy key, the marker means nothing
+    assert client.find_existing_card("board-1", "Nope", "Nope") is None
+
+
+def test_existing_card_lookup_returns_none_when_missing(client, http):
+    http[1].json.return_value = [{"id": "card-without-description", "name": "Title"}]
+    assert client.find_existing_card("board-1", "Title", "Description") is None
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 500])
@@ -112,13 +129,13 @@ def test_empty_success_response_is_supported(client, http):
     http[1].json.assert_not_called()
 
 
-def test_story_format_includes_criteria_evidence_and_zero_estimate(client, pipeline_results):
+def test_story_format_includes_criteria_quote_with_its_start_time_and_zero_estimate(client, pipeline_results):
     story = pipeline_results[1].stories[0].model_copy(update={"estimate": 0, "epic": "Accounts"})
     description = client.format_story(story)
     assert "Acceptance Criteria checklist" in description
     assert "Solution Tasks (proposed) checklist" in description
-    assert story.source.quote in description
-    assert "Speaker: Alex" in description
-    assert "Start Time: 2.00s" in description
+    # one line: the quote, then only when it begins
+    assert f'Source Quote: "{story.source.quote}" (0:02)' in description
+    assert "Start Time" not in description and "End Time" not in description and "Speaker" not in description
     assert "Estimate: 0 points" in description
     assert "Epic: Accounts" in description

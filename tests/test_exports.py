@@ -17,6 +17,7 @@ from services.api import trello_auth
 from services.api.server import app
 from services.db import get_session
 from services.models import AnalyticsEvent, Board, Import, Meeting, Story
+from services.worker.objects import DraftStory
 from starlette.requests import Request
 
 
@@ -41,13 +42,12 @@ def export_case(database_connection, pipeline_results):
         board_id, story_id = board.id, story.id
 
     trello = Mock(spec=TrelloClient)
-    trello.find_import_by_key.return_value = None
+    trello.find_existing_card.return_value = None
     trello.list_lists.return_value = [{"id": "list-1", "name": "Triage"}]
     trello.list_labels.return_value = [{"id": "label-1", "name": "AI Draft"}]
     trello.create_label.return_value = {"id": "new-label", "name": "AI Draft"}
     trello.create_card.return_value = {"id": "card-1"}
     trello.format_story.side_effect = TrelloClient.format_story
-    trello.list_attachments.return_value = []
     trello.list_checklists.return_value = []
     trello.create_checklist.side_effect = lambda card_id, name: {"id": name, "name": name, "checkItems": []}
 
@@ -67,7 +67,6 @@ def export_case(database_connection, pipeline_results):
                 url=f"/api/boards/{board_id}/imports",
                 body={
                     "story_id": str(story_id), "list_id": "list-1",
-                    "evidence_url": "https://example.com/meetings/synthetic",
                 },
             )
     finally:
@@ -89,7 +88,8 @@ def test_export_updates_database_and_repeat_returns_same_card(export_case):
     assert result["idempotency_key"] == f"trello:{case.story_id}"
     case.trello.create_card.assert_called_once()
     case.trello.add_label.assert_called_once_with("card-1", "label-1")
-    case.trello.attach_evidence_link.assert_called_once_with("card-1", case.body["evidence_url"])
+    # no meeting link goes on the card
+    assert not [call for call in case.trello.mock_calls if "attach" in call[0]]
     call_count = len(case.trello.mock_calls)
 
     repeated = case.api.post(case.url, json=case.body)
@@ -144,7 +144,7 @@ def test_export_creates_missing_ai_draft_label(export_case):
 
 def test_existing_marker_card_is_reused(export_case):
     case = export_case
-    case.trello.find_import_by_key.return_value = {"id": "recovered-card"}
+    case.trello.find_existing_card.return_value = {"id": "recovered-card"}
     response = case.api.post(case.url, json=case.body)
     assert response.status_code == 200, response.text
     assert response.json()["external_card_id"] == "recovered-card"
@@ -164,7 +164,7 @@ def test_timeout_keeps_pending_and_retry_reconciles_without_recreating(export_ca
     assert case.api.post(case.url, json=case.body).status_code == 409
     assert case.trello.create_card.call_count == 1
 
-    case.trello.find_import_by_key.return_value = {"id": "late-card"}
+    case.trello.find_existing_card.return_value = {"id": "late-card"}
     retry = case.api.post(case.url, json=case.body)
     assert retry.status_code == 200, retry.text
     assert retry.json()["external_card_id"] == "late-card"
@@ -181,9 +181,9 @@ def test_preflight_failure_does_not_leave_a_creation_reservation(export_case):
     case.trello.create_card.assert_not_called()
 
 
-def test_attachment_failure_preserves_card_id_and_retry_avoids_duplicate_link(export_case):
+def test_label_failure_preserves_card_id_and_retry_does_not_create_another_card(export_case):
     case = export_case
-    case.trello.attach_evidence_link.side_effect = requests.Timeout("Synthetic timeout")
+    case.trello.add_label.side_effect = requests.Timeout("Synthetic timeout")
     assert case.api.post(case.url, json=case.body).status_code == 502
     saved = import_record(case)
     assert saved.external_card_id == "card-1"
@@ -191,12 +191,10 @@ def test_attachment_failure_preserves_card_id_and_retry_avoids_duplicate_link(ex
     with case.session() as session:
         assert session.get(Story, case.story_id).status == "accepted"
 
-    # The attachment succeeded remotely even though its response timed out.
-    case.trello.list_attachments.return_value = [{"url": case.body["evidence_url"]}]
+    case.trello.add_label.side_effect = None
     response = case.api.post(case.url, json=case.body)
     assert response.status_code == 200, response.text
     assert case.trello.create_card.call_count == 1
-    assert case.trello.attach_evidence_link.call_count == 1
 
 
 def test_pending_export_blocks_editing_and_review_changes(export_case, pipeline_results):
@@ -293,3 +291,53 @@ def test_checklist_failure_keeps_card_id_and_retry_skips_existing_checks(export_
     assert case.api.post(case.url, json=case.body).status_code == 200
     case.trello.create_card.assert_called_once()
     assert [call.args[1] for call in case.trello.add_checklist_item.call_args_list] == draft.solution_tasks
+
+
+def test_created_card_description_is_only_the_story(export_case):
+    case = export_case
+    assert case.api.post(case.url, json=case.body).status_code == 200
+    (list_id, title, description), kwargs = case.trello.create_card.call_args
+    assert kwargs == {}
+    with case.session() as session:
+        draft = DraftStory.model_validate(session.get(Story, case.story_id).draft)
+    assert (list_id, title) == ("list-1", draft.title)
+    assert description == TrelloClient.format_story(draft)
+    assert "import-key" not in description.lower()
+    assert "backlogger" not in description.lower()
+    # the quote and only when it begins: Source Quote: "..." (0:02)
+    assert f'Source Quote: "{draft.source.quote}" (0:02)' in description
+    assert "Start Time" not in description and "End Time" not in description
+
+
+def test_card_lookup_uses_the_story_text_and_skips_other_imports_cards(export_case):
+    case = export_case
+    with case.session() as session:
+        other = Story(
+            meeting_id=session.get(Story, case.story_id).meeting_id,
+            draft=session.get(Story, case.story_id).draft, status="imported",
+        )
+        session.add(other)
+        session.flush()
+        session.add(Import(
+            story_id=other.id, idempotency_key=f"other-{uuid4()}", status="completed",
+            external_card_id="someone-elses-card",
+        ))
+        session.commit()
+    assert case.api.post(case.url, json=case.body).status_code == 200
+
+    (board, title, description), kwargs = case.trello.find_existing_card.call_args
+    with case.session() as session:
+        draft = DraftStory.model_validate(session.get(Story, case.story_id).draft)
+    assert (title, description) == (draft.title, TrelloClient.format_story(draft))
+    # a card another story was exported to can't be mistaken for this one
+    assert "someone-elses-card" in kwargs["exclude_ids"]
+    assert kwargs["legacy_key"] == import_record(case).idempotency_key
+
+
+def test_older_clients_may_still_send_an_evidence_link_but_no_attachment_is_made(export_case):
+    case = export_case
+    body = {**case.body, "evidence_url": "https://example.com/meetings/synthetic"}
+    assert case.api.post(case.url, json=body).status_code == 200
+    assert not [call for call in case.trello.mock_calls if "attach" in call[0]]
+    description = case.trello.create_card.call_args.args[2]
+    assert "example.com" not in description

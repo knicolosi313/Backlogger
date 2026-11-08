@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { countStoriesForMeeting, createMeeting, getProcessingStatus, startProcessing, uploadMedia } from '@/lib/api';
 import { AutoImportProgress } from './AutoImportProgress';
+import { Icon } from './Icon';
 import { RecentMeetings } from './RecentMeetings';
 import { formatClock, formatPercent, formatSize } from '@/lib/format';
 import type { PanelToBackground } from '@/lib/messages';
@@ -124,6 +125,7 @@ export function RecordTab({ settings, board, onReviewStories }: Props) {
               sendToBackground({ type: 'STOP_RECORDING' });
             }}
           >
+            <Icon name="record" />
             {stopping ? 'Saving recording…' : 'Stop recording'}
           </button>
         </section>
@@ -215,6 +217,7 @@ function DoneCard({
             onReviewStories();
           }}
         >
+          <Icon name="drafts" />
           Review drafts
         </button>
       )}
@@ -266,6 +269,10 @@ function CreateMeetingCard({ settings, board }: { settings: Settings; board: Boa
 
   return (
     <form className="card stack" onSubmit={handleCreate}>
+      <h2 className="hero-title">
+        <Icon name="video" size={22} />
+        Record a meeting
+      </h2>
       <label className="field">
         Meeting title
         <input
@@ -277,6 +284,7 @@ function CreateMeetingCard({ settings, board }: { settings: Settings; board: Boa
       </label>
       <p className="hint">Create the meeting first, then record it or choose an audio file.</p>
       <button className="primary" type="submit" disabled={busy || !title.trim()}>
+        <Icon name="video" />
         {busy ? 'Creating…' : 'Create meeting'}
       </button>
       {error && <p className="status error" role="alert">{error}</p>}
@@ -309,12 +317,13 @@ function CreatedCard({ settings, state }: { settings: Settings; state: State<'cr
         file you already have.
       </p>
       {settings.consentReminder && (
-        <label className="checkbox">
+        <label className="checkbox consent">
           <input type="checkbox" checked={consentChecked} onChange={(e) => setConsentChecked(e.target.checked)} />
           Everyone in this meeting knows it is being recorded.
         </label>
       )}
       <button className="primary" disabled={!canStart} onClick={handleStart}>
+        <Icon name="record" />
         Start recording
       </button>
 
@@ -370,7 +379,7 @@ function RecordedCard({
       }
 
       await uploadMedia(settings, state.meetingId, audio.blob, audio.fileName);
-      await startProcessing(settings, state.meetingId, settings.creativity);
+      await startProcessing(settings, state.meetingId, settings.creativity, settings.model);
       await clearPendingAudio().catch(() => {});
       await recorderState.setValue({ status: 'processing', meetingId: state.meetingId, processingStatus: 'queued' });
     } catch (err) {
@@ -414,6 +423,7 @@ function RecordedCard({
       )}
 
       <button className="primary" onClick={handleSubmit}>
+        <Icon name="upload" />
         Submit for processing
       </button>
       <button className="link" onClick={handleDiscardAudio}>
@@ -493,13 +503,17 @@ function AudioFilePicker({
 function AutoImportToggle({ settings }: { settings: Settings }) {
   return (
     <section className="card stack">
-      <label className="checkbox">
+      <label className="toggle-row">
+        <span className="card-title">
+          <Icon name="bolt" size={20} />
+          Auto-import confident stories
+        </span>
         <input
+          className="toggle"
           type="checkbox"
           checked={settings.autoImport}
           onChange={(e) => settingsItem.setValue({ ...settings, autoImport: e.target.checked })}
         />
-        Auto-import confident stories
       </label>
       <p className="hint">
         {settings.autoImport

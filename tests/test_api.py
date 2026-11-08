@@ -1,5 +1,6 @@
 """API workflow tests using PostgreSQL transactions and fake Gemini output."""
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -7,10 +8,12 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from services.api import jobs, meetings
+from services.api import stories as story_routes
 from services.api.server import app
 from services.db import get_session
 from services.models import Meeting, Story, StoryRevision
 from services.worker import pipeline
+from services.worker.objects import RevisionResult
 
 
 @pytest.fixture
@@ -492,3 +495,371 @@ def test_invalid_creativity_does_not_start_processing(api, monkeypatch):
     monkeypatch.setenv("DEFAULT_CREATIVITY", "unknown")
     assert api.post(f"{url}/process").status_code == 503
     assert api.get(url).json()["status"] == "uploaded"
+
+
+def test_only_the_two_supported_models_are_offered(api, monkeypatch):
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    assert api.get("/api/models").json() == {
+        "default": "gemini-3.1-flash-lite",
+        "models": ["gemini-3.1-flash-lite", "gemini-3.5-flash-lite"],
+    }
+
+    # The configured default comes first, and stays usable even if it isn't one of the two.
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    assert api.get("/api/models").json()["models"] == ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+    monkeypatch.setenv("GEMINI_MODEL", "custom-model")
+    body = api.get("/api/models").json()
+    assert body["default"] == "custom-model"
+    assert body["models"] == ["custom-model", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
+
+
+@pytest.mark.parametrize("selected,expected", [
+    (None, "gemini-3.1-flash-lite"),
+    ("gemini-3.1-flash-lite", "gemini-3.1-flash-lite"),
+    ("gemini-3.5-flash-lite", "gemini-3.5-flash-lite"),
+])
+def test_processing_passes_model_selection_to_job(api, monkeypatch, selected, expected):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    url = f"/api/meetings/{meeting['id']}"
+    assert api.post(f"{url}/media", files={"file": ("test.wav", b"synthetic", "audio/wav")}).status_code == 200
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    received_models = []
+    monkeypatch.setattr(meetings, "process_meeting", lambda meeting_id, key, model, creativity: received_models.append(model))
+    response = api.post(f"{url}/process", json={} if selected is None else {"model": selected})
+    assert response.status_code == 202, response.text
+    assert received_models == [expected]
+
+
+def test_unsupported_model_does_not_start_processing(api, monkeypatch):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    url = f"/api/meetings/{meeting['id']}"
+    api.post(f"{url}/media", files={"file": ("test.wav", b"synthetic", "audio/wav")})
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    started = []
+    monkeypatch.setattr(meetings, "process_meeting", lambda *args: started.append(args))
+    response = api.post(f"{url}/process", json={"model": "gemini-2.5-pro"})
+    assert response.status_code == 422
+    assert "gemini-2.5-pro" in response.json()["detail"]
+    assert api.post(f"{url}/process", json={"model": ""}).status_code == 422
+    assert started == []
+    assert api.get(url).json()["status"] == "uploaded"
+
+
+# ---- requesting AI edits on a draft ----
+
+
+@pytest.fixture
+def editable(api, database_connection, pipeline_results, monkeypatch):
+    """A processed story, plus a fake AI that records what it was asked and answers as told."""
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    upload_and_process(api, meeting["id"])
+    story = api.get(f"/api/boards/{board['id']}/stories").json()[0]
+    asked = []
+    answer = {}
+
+    def fake_revise(draft, instructions, transcript, context, model):
+        asked.append(SimpleNamespace(
+            draft=draft, instructions=instructions, transcript=transcript, context=context, model=model,
+        ))
+        if "during" in answer:
+            answer["during"]()
+        if "error" in answer:
+            raise answer["error"]
+        return answer["result"], answer["reviews"]
+
+    def respond(count=1, **changes):
+        base = pipeline_results[1].stories[0]
+        stories = [
+            base.model_copy(update={"title": f"Revised {n + 1}", **changes}, deep=True) for n in range(count)
+        ]
+        answer["result"] = RevisionResult(stories=stories, summary="Reworded the story.")
+        answer["reviews"] = [
+            pipeline_results[2].reviews[0].model_copy(update={"index": n, "confidence": 0.4, "invest_score": 3})
+            for n in range(count)
+        ]
+
+    respond()
+    monkeypatch.setattr(story_routes, "revise_story", fake_revise)
+    return SimpleNamespace(
+        api=api, board=board, story=story, asked=asked, answer=answer, respond=respond,
+        url=f"/api/stories/{story['id']}/request-edits", db=database_connection,
+    )
+
+
+def set_story(case, **changes):
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        record = session.get(Story, case.story["id"])
+        for key, value in changes.items():
+            setattr(record, key, value)
+        session.commit()
+
+
+def test_requesting_edits_replaces_the_draft_and_reviews_it_again(editable):
+    case = editable
+    set_story(case, status="accepted")
+    response = case.api.post(case.url, json={"instructions": "Make the title shorter"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["summary"] == "Reworded the story."
+    assert result["new_stories"] == []
+    story = result["story"]
+    assert story["id"] == case.story["id"]
+    assert story["draft"]["title"] == "Revised 1"
+    # an accepted story that was changed needs a fresh look from a human
+    assert story["status"] == "draft"
+    # the scores are for the revised draft, from the new review, not left blank like after a manual edit
+    assert (story["confidence"], story["invest_score"]) == (0.4, 3)
+    assert story["critique"]["invest_score"] == 3
+    assert case.api.get(f"/api/stories/{story['id']}").json() == story
+
+    # the AI saw the story as it was, the instructions, the transcript, and which model to use
+    (call,) = case.asked
+    assert call.draft == case.story["draft"] and call.instructions == "Make the title shorter"
+    assert call.transcript.segments and call.model == "gemini-3.1-flash-lite"
+    assert call.context is not None  # related board work was looked up
+
+    revisions = case.api.get(f"/api/stories/{story['id']}/revisions").json()
+    assert [(item["revision"], item["editor"]) for item in revisions] == [(1, "ai"), (2, "ai")]
+    assert revisions[0]["draft"] == case.story["draft"] and revisions[1]["draft"]["title"] == "Revised 1"
+
+
+def test_requesting_edits_records_one_event(editable):
+    from services.models import AnalyticsEvent
+
+    case = editable
+    assert case.api.post(case.url, json={"instructions": "Tighten it"}).status_code == 200
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        events = session.exec(select(AnalyticsEvent).where(
+            AnalyticsEvent.story_id == case.story["id"], AnalyticsEvent.event_type == "story_ai_edited",
+        )).all()
+    assert len(events) == 1
+
+
+def test_a_split_keeps_the_first_story_and_adds_the_rest_as_new_drafts(editable):
+    from services.models import AnalyticsEvent
+
+    case = editable
+    case.respond(count=3)
+    response = case.api.post(case.url, json={"instructions": "Split into three stories"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["story"]["id"] == case.story["id"]
+    assert [item["draft"]["title"] for item in [result["story"], *result["new_stories"]]] == [
+        "Revised 1", "Revised 2", "Revised 3",
+    ]
+    assert all(item["status"] == "draft" and item["meeting_id"] == case.story["meeting_id"]
+               for item in result["new_stories"])
+    assert all(item["confidence"] == 0.4 for item in result["new_stories"])
+
+    listed = case.api.get(f"/api/boards/{case.board['id']}/stories").json()
+    assert {item["id"] for item in listed} == {result["story"]["id"], *(s["id"] for s in result["new_stories"])}
+    for item in result["new_stories"]:
+        revisions = case.api.get(f"/api/stories/{item['id']}/revisions").json()
+        assert [(r["revision"], r["editor"]) for r in revisions] == [(1, "ai")]
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        created = session.exec(select(AnalyticsEvent).where(
+            AnalyticsEvent.board_id == case.board["id"], AnalyticsEvent.event_type == "story_created",
+            AnalyticsEvent.story_id.in_([s["id"] for s in result["new_stories"]]),
+        )).all()
+    assert len(created) == 2
+
+
+def test_the_selected_model_is_used_and_unknown_models_are_refused_before_the_ai_runs(editable):
+    case = editable
+    ok = case.api.post(case.url, json={"instructions": "Tighten it", "model": "gemini-3.5-flash-lite"})
+    assert ok.status_code == 200, ok.text
+    assert case.asked[-1].model == "gemini-3.5-flash-lite"
+
+    before = len(case.asked)
+    refused = case.api.post(case.url, json={"instructions": "Tighten it", "model": "gemini-9-ultra"})
+    assert refused.status_code == 422 and "gemini-9-ultra" in refused.json()["detail"]
+    assert len(case.asked) == before
+
+
+def test_a_story_changed_while_the_ai_works_is_not_overwritten(editable):
+    case = editable
+    human = {**case.story["draft"], "title": "A person edited this meanwhile"}
+    case.answer["during"] = lambda: case.api.patch(f"/api/stories/{case.story['id']}", json={"draft": human})
+    response = case.api.post(case.url, json={"instructions": "Tighten it"})
+    assert response.status_code == 409
+    assert "changed while the AI was working" in response.json()["detail"]
+    current = case.api.get(f"/api/stories/{case.story['id']}").json()
+    assert current["draft"]["title"] == "A person edited this meanwhile"
+    revisions = case.api.get(f"/api/stories/{case.story['id']}/revisions").json()
+    assert [item["editor"] for item in revisions] == ["ai", "human"]
+
+
+def test_an_ai_failure_changes_nothing_and_never_leaks_details(editable):
+    from services.worker.revision import RevisionError
+
+    case = editable
+    before = case.api.get(f"/api/stories/{case.story['id']}").json()
+    case.answer["error"] = RevisionError("The AI returned an unusable number of stories.")
+    refused = case.api.post(case.url, json={"instructions": "Tighten it"})
+    assert refused.status_code == 502 and "unusable number" in refused.json()["detail"]
+
+    case.answer["error"] = RuntimeError("quota exceeded for key=SECRET-KEY")
+    failed = case.api.post(case.url, json={"instructions": "Tighten it"})
+    assert failed.status_code == 502
+    assert "SECRET" not in failed.text and "Try again" in failed.json()["detail"]
+
+    assert case.api.get(f"/api/stories/{case.story['id']}").json() == before
+    assert len(case.api.get(f"/api/stories/{case.story['id']}/revisions").json()) <= 1
+
+
+@pytest.mark.parametrize("blocker", ["imported", "pending_export"])
+def test_imported_stories_and_pending_exports_cannot_be_revised(editable, blocker):
+    from services.models import Import
+
+    case = editable
+    if blocker == "imported":
+        set_story(case, status="imported")
+    else:
+        with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+            session.add(Import(story_id=case.story["id"], idempotency_key=f"revise-test-{uuid4()}"))
+            session.commit()
+    assert case.api.post(case.url, json={"instructions": "Tighten it"}).status_code == 409
+    assert case.asked == []
+
+
+def test_revising_needs_the_api_key_valid_instructions_and_a_transcript(editable, monkeypatch):
+    case = editable
+    assert case.api.post(case.url, json={"instructions": "   "}).status_code == 422
+    assert case.api.post(case.url, json={"instructions": "x" * 1001}).status_code == 422
+    assert case.api.post(case.url, json={}).status_code == 422
+    assert case.api.post(case.url, json={"instructions": "Tighten it", "extra": 1}).status_code == 422
+
+    monkeypatch.delenv("GEMINI_API_KEY")
+    assert case.api.post(case.url, json={"instructions": "Tighten it"}).status_code == 503
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-not-a-real-key")
+
+    # a story whose meeting never produced a transcript has nothing to revise it from
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        bare_meeting = Meeting(board_id=case.board["id"], title="No transcript")
+        session.add(bare_meeting)
+        session.flush()
+        bare = Story(meeting_id=bare_meeting.id, draft=case.story["draft"])
+        session.add(bare)
+        session.commit()
+        bare_id = bare.id
+    response = case.api.post(f"/api/stories/{bare_id}/request-edits", json={"instructions": "Tighten it"})
+    assert response.status_code == 409 and "no transcript" in response.json()["detail"]
+    assert case.asked == []
+    assert case.api.post(f"/api/stories/{uuid4()}/request-edits", json={"instructions": "x"}).status_code == 404
+
+
+# ---- deleting rejected drafts, and story titles in export history ----
+
+
+@pytest.fixture
+def rejected_story(api, database_connection):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    upload_and_process(api, meeting["id"])
+    story = api.get(f"/api/boards/{board['id']}/stories").json()[0]
+    assert api.post(f"/api/stories/{story['id']}/decision", json={"decision": "reject"}).status_code == 200
+    return SimpleNamespace(api=api, board=board, story=story, db=database_connection)
+
+
+def stored_story(case):
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        return session.get(Story, case.story["id"])
+
+
+def test_deleting_a_rejected_story_hides_it_but_keeps_everything(rejected_story):
+    from services.models import AnalyticsEvent
+
+    case = rejected_story
+    assert case.api.delete(f"/api/stories/{case.story['id']}").status_code == 204
+
+    # gone from the lists the app shows...
+    assert case.api.get(f"/api/boards/{case.board['id']}/stories").json() == []
+    assert case.api.get(f"/api/boards/{case.board['id']}/stories", params={"status": "rejected"}).json() == []
+    # ...but still stored, readable, and countable
+    assert stored_story(case).deleted_at is not None
+    assert case.api.get(f"/api/stories/{case.story['id']}").status_code == 200
+    kept = case.api.get(f"/api/boards/{case.board['id']}/stories", params={"include_deleted": True}).json()
+    assert [item["id"] for item in kept] == [case.story["id"]]
+    assert len(case.api.get(f"/api/stories/{case.story['id']}/revisions").json()) >= 1
+    # analytics still count it, so deleting can't be used to hide rejections
+    assert case.api.get(f"/api/boards/{case.board['id']}/analytics").json()["story_counts"]["rejected"] == 1
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        events = session.exec(select(AnalyticsEvent).where(
+            AnalyticsEvent.story_id == case.story["id"], AnalyticsEvent.event_type == "story_deleted",
+        )).all()
+    assert len(events) == 1
+
+
+def test_deleting_twice_is_safe_and_records_one_event(rejected_story):
+    from services.models import AnalyticsEvent
+
+    case = rejected_story
+    first_time = None
+    for _ in range(2):
+        assert case.api.delete(f"/api/stories/{case.story['id']}").status_code == 204
+        first_time = first_time or stored_story(case).deleted_at
+        assert stored_story(case).deleted_at == first_time
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        events = session.exec(select(AnalyticsEvent).where(
+            AnalyticsEvent.story_id == case.story["id"], AnalyticsEvent.event_type == "story_deleted",
+        )).all()
+    assert len(events) == 1
+
+
+@pytest.mark.parametrize("status", ["draft", "needs_changes", "accepted", "imported"])
+def test_only_rejected_stories_can_be_deleted(rejected_story, status):
+    case = rejected_story
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        session.get(Story, case.story["id"]).status = status
+        session.commit()
+    assert case.api.delete(f"/api/stories/{case.story['id']}").status_code == 409
+    assert stored_story(case).deleted_at is None
+    assert [s["id"] for s in case.api.get(f"/api/boards/{case.board['id']}/stories").json()] == [case.story["id"]]
+
+
+def test_a_story_with_a_pending_export_cannot_be_deleted(rejected_story):
+    from services.models import Import
+
+    case = rejected_story
+    with Session(bind=case.db, join_transaction_mode="create_savepoint") as session:
+        session.add(Import(story_id=case.story["id"], idempotency_key=f"delete-test-{uuid4()}"))
+        session.commit()
+    assert case.api.delete(f"/api/stories/{case.story['id']}").status_code == 409
+    assert stored_story(case).deleted_at is None
+
+
+def test_a_deleted_story_cannot_be_changed_or_brought_back(rejected_story, monkeypatch):
+    case = rejected_story
+    assert case.api.delete(f"/api/stories/{case.story['id']}").status_code == 204
+    url = f"/api/stories/{case.story['id']}"
+    assert case.api.patch(url, json={"draft": case.story["draft"]}).status_code == 409
+    assert case.api.post(f"{url}/decision", json={"decision": "restore"}).status_code == 409
+    assert case.api.post(f"{url}/decision", json={"decision": "accept"}).status_code == 409
+    assert case.api.post(f"{url}/request-edits", json={"instructions": "Tighten it"}).status_code == 409
+    assert stored_story(case).status == "rejected"
+
+
+def test_deleting_an_unknown_story_is_not_found(api):
+    assert api.delete(f"/api/stories/{uuid4()}").status_code == 404
+
+
+def test_export_history_names_the_story(api, database_connection):
+    from services.models import Import
+
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    upload_and_process(api, meeting["id"])
+    story = api.get(f"/api/boards/{board['id']}/stories").json()[0]
+    with Session(bind=database_connection, join_transaction_mode="create_savepoint") as session:
+        session.add(Import(
+            story_id=story["id"], idempotency_key=f"history-test-{uuid4()}",
+            status="completed", external_card_id="card-1",
+        ))
+        session.commit()
+    history = api.get(f"/api/boards/{board['id']}/imports").json()
+    assert [(item["story_id"], item["story_title"]) for item in history] == [(story["id"], story["draft"]["title"])]
+    single = api.get(f"/api/stories/{story['id']}/import").json()
+    assert single["story_title"] == story["draft"]["title"]

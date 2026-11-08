@@ -14,6 +14,7 @@ from services.worker.objects import Transcript
 from services.worker.prompts.extract import get_extract_prompt
 
 from .dependencies import SessionDep, get_record
+from .gemini_models import available_models, default_model
 from .jobs import process_meeting
 from .media import CONTENT_TYPES, delete_media, media_exists, processing_audio, save_audio
 from .schemas import MeetingCreate, MeetingStatus, ProcessAccepted, ProcessOptions
@@ -103,6 +104,10 @@ def start_processing(
     except ValueError:
         raise HTTPException(status_code=503, detail="DEFAULT_CREATIVITY is not a supported creativity level") from None
 
+    model = options.model if options is not None and options.model else default_model()
+    if model not in available_models():
+        raise HTTPException(status_code=422, detail=f"Unsupported model: {model}")
+
     auto_import = options.auto_import if options is not None else None
     if auto_import is not None:
         from .auto_import import configure_auto_import
@@ -115,7 +120,7 @@ def start_processing(
     media_key = meeting.media_key
     meeting.status = "processing"
     session.commit()
-    arguments = [meeting_id, media_key, os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-lite", creativity]
+    arguments = [meeting_id, media_key, model, creativity]
     if auto_import is not None:
         arguments.append(True)
     tasks.add_task(process_meeting, *arguments)

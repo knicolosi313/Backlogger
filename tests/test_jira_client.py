@@ -59,7 +59,7 @@ def test_import_reference_cannot_inject_jql(jira_http):
 def test_issue_creation_sends_adf_and_marker_labels(jira_http, pipeline_results):
     client, request, response = jira_http
     response.json.return_value = {"key": "TEST-1", "id": "10000"}
-    description = client.format_story(pipeline_results[1].stories[0], "https://example.com/meeting")
+    description = client.format_story(pipeline_results[1].stories[0])
     assert description["type"] == "doc" and description["version"] == 1
     assert "Acceptance criteria" in str(description)
     lists = [node for node in description["content"] if node["type"] == "bulletList"]
@@ -68,7 +68,9 @@ def test_issue_creation_sends_adf_and_marker_labels(jira_http, pipeline_results)
         f"☐ {criterion}" for criterion in pipeline_results[1].stories[0].acceptance_criteria
     ]
     assert "Solution tasks (proposed)" in str(description)
-    assert "https://example.com/meeting" in str(description)
+    quote = pipeline_results[1].stories[0].source.quote
+    assert f'Source Quote: "{quote}" (0:02)' in str(description)
+    assert "Meeting evidence" not in str(description) and "link" not in str(description)
     fields = {"summary": "Test", "description": description, "labels": ["ai-draft"]}
     assert client.create_issue(str(uuid4()), fields)["key"] == "TEST-1"
     assert request.call_args.kwargs["json"] == {"fields": fields}

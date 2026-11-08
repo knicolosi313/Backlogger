@@ -1,5 +1,6 @@
 import requests
 from services.worker.objects import DraftStory
+from services.worker.timecode import format_clock
 
 class TrelloClient:
     """Talk to Trello; database records and export decisions live in the service layer."""
@@ -63,16 +64,6 @@ class TrelloClient:
         """Attach an existing label to a card."""
         return self._request("POST", f"cards/{card_id}/idLabels", params={"value": label_id})
 
-    def attach_evidence_link(self, card_id: str, url: str, name: str = "Meeting evidence"):
-        """Attach a link to the meeting or story review page."""
-        return self._request(
-            "POST", f"cards/{card_id}/attachments", params={"url": url, "name": name},
-        )
-
-    def list_attachments(self, card_id: str):
-        """Read existing evidence links before retrying an attachment request."""
-        return self._request("GET", f"cards/{card_id}/attachments")
-
     def list_checklists(self, card_id: str):
         """Include all items so retries can preserve completed checks."""
         return self._request("GET", f"cards/{card_id}/checklists", params={"checkItems": "all"})
@@ -85,20 +76,8 @@ class TrelloClient:
             "POST", f"checklists/{checklist_id}/checkItems", params={"name": name, "checked": "false"},
         )
 
-    def create_card(
-        self,
-        list_id: str,
-        title: str,
-        description: str,
-        *,
-        idempotency_key: str | None = None,
-    ):
-        """Create a card, optionally marking it for later import lookups."""
-        if idempotency_key is not None:
-            if not idempotency_key.strip() or "\n" in idempotency_key or "\r" in idempotency_key:
-                raise ValueError("Import key must be a non-empty single line")
-            description = f"{description.rstrip()}\n\nBacklogger-Import-Key: {idempotency_key}"
-
+    def create_card(self, list_id: str, title: str, description: str):
+        """Create a card. The description is exactly what the person should read."""
         body = {
             "idList": list_id,
             "name": title,
@@ -124,23 +103,46 @@ class TrelloClient:
             description += "Needs Clarification: Yes\n"
         else:
             description += "Needs Clarification: No\n"
-        description += (
-            f"\nSource Quote:\n\"{story.source.quote}\"\n"
-            f"Start Time: {story.source.start_s:.2f}s, "
-            f"End Time: {story.source.end_s:.2f}s, "
-            f"Speaker: {story.source.speaker}"
-        )
+        # Only when the quote begins, like a video player shows it: (2:14)
+        description += f'\nSource Quote: "{story.source.quote}" ({format_clock(story.source.start_s)})'
         return description
 
-    def find_import_by_key(self, board_id: str, idempotency_key: str):
-        """Return the matching card, or None if it doesn't exist."""
+    def find_existing_card(
+        self,
+        board_id: str,
+        title: str,
+        description: str,
+        *,
+        exclude_ids: frozenset[str] | set[str] = frozenset(),
+        legacy_key: str | None = None,
+    ):
+        """Return a card we already created for this story, or None.
+
+        Nothing is stored on the card to find it by. The title and description are generated from
+        the accepted story (source quote, speaker and times included) and a pending export blocks
+        edits, so an exact match is our card. Cards in `exclude_ids` already belong to another
+        import. Archived cards count too.
+
+        `legacy_key` also finds cards made before this change, which ended with a
+        "Backlogger-Import-Key: <key>" line.
+        """
         params = {
             "filter": "all",
             "fields": "id,name,desc,url",
         }
         cards = self._request("GET", f"boards/{board_id}/cards", params=params)
-        marker = f"Backlogger-Import-Key: {idempotency_key}"
+
+        def normalized(text: str) -> str:
+            return text.replace("\r\n", "\n").rstrip()
+
+        wanted = normalized(description)
+        legacy_marker = f"Backlogger-Import-Key: {legacy_key}" if legacy_key else None
         for card in cards:
-            if marker in card.get("desc", "").splitlines():
+            if card["id"] in exclude_ids:
+                continue
+            found = normalized(card.get("desc", ""))
+            if card.get("name") == title and found in (wanted, f"{wanted}\n\n{legacy_marker}"):
+                return card
+            if legacy_marker and legacy_marker in found.splitlines():
                 return card
         return None

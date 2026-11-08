@@ -117,12 +117,11 @@ def auto_case(request, database_connection, pipeline_results, monkeypatch, tmp_p
     client = Mock(spec=TrelloClient if provider == "trello" else JiraClient)
     if provider == "trello":
         client.list_lists.return_value = [{"id": "list1", "name": "Triage"}]
-        client.find_import_by_key.return_value = None
+        client.find_existing_card.return_value = None
         client.list_labels.return_value = [{"id": "label1", "name": "AI Draft"}]
         client.create_card.return_value = {"id": "card1"}
         client.list_checklists.return_value = []
         client.create_checklist.side_effect = lambda card_id, name: {"id": name, "name": name}
-        client.list_attachments.return_value = []
         client.format_story.side_effect = TrelloClient.format_story
         monkeypatch.setattr(trello_auth, "TrelloClient", Mock(return_value=client))
         destination = {"list_id": "list1"}
@@ -225,7 +224,7 @@ def test_destination_mismatch_is_rejected_before_processing(auto_case):
 def test_failed_export_can_resume_without_duplicate_creation(auto_case):
     case = auto_case
     if case.provider == "trello":
-        case.client.attach_evidence_link.side_effect = [requests.Timeout("secret=NEVER_ECHO"), None]
+        case.client.add_label.side_effect = [requests.Timeout("secret=NEVER_ECHO"), None]
     else:
         # Preflight succeeds; the first export's project check fails before issue creation.
         case.client.get_project.side_effect = [{"id": "10001"}, requests.Timeout("secret=NEVER_ECHO"), {"id": "10001"}]
@@ -249,7 +248,7 @@ def test_partial_failure_keeps_exporting_and_retry_reuses_completed_work(auto_ca
     case.results[2].reviews.append(case.results[2].reviews[0].model_copy(update={"index": 1}, deep=True))
     if case.provider == "trello":
         case.client.create_card.side_effect = [{"id": "card1"}, {"id": "card2"}]
-        case.client.attach_evidence_link.side_effect = [requests.Timeout("Synthetic failure"), None, None]
+        case.client.add_label.side_effect = [requests.Timeout("Synthetic failure"), None, None]
     else:
         case.client.create_issue.side_effect = [{"key": "TEST-1", "id": "10020"}, {"key": "TEST-2", "id": "10021"}]
         case.client.get_project.side_effect = [{"id": "10001"}, requests.Timeout("Synthetic failure"), {"id": "10001"}, {"id": "10001"}]

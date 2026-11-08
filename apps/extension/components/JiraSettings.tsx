@@ -11,6 +11,7 @@ import {
   parseJiraBoardExternalId,
 } from '@/lib/jira';
 import { boardProvider } from '@/lib/provider';
+import { Icon } from './Icon';
 import { forgetProvider, settingsItem } from '@/lib/storage';
 import type {
   JiraConnection,
@@ -78,7 +79,10 @@ export function JiraConnect({
 
   return (
     <section className="card stack">
-      <h2>Jira</h2>
+      <h2 className="card-title">
+        <Icon name="link" size={20} />
+        Jira
+      </h2>
       {!status && !connection.error && <p className="hint">Checking your Jira connection…</p>}
 
       {status?.connected && (
@@ -190,7 +194,10 @@ export function JiraPicker({ settings, jira }: { settings: Settings; jira: JiraS
 
   return (
     <section className="card stack">
-      <h2>Project</h2>
+      <h2 className="card-title">
+        <Icon name="board" size={20} />
+        Project
+      </h2>
       <p className="hint">Pick the Jira project your meetings and imported stories belong to.</p>
 
       <label className="field">

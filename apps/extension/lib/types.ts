@@ -18,7 +18,7 @@ export interface Settings {
   webAppUrl: string;
 
   creativity: Creativity;
-  model: string;
+  model: string; // one of the backend's models (GET /api/models), or '' for its default
 
   autoImport: boolean;
   autoImportThreshold: number; // 0 to 1, compared with story confidence
@@ -233,7 +233,15 @@ export type StoryEdit = Partial<
   Pick<Story, 'title' | 'persona' | 'goal' | 'benefit' | 'acceptanceCriteria' | 'priority' | 'points'>
 >;
 
-export type StoryDecision = 'accept' | 'reject' | 'restore';
+// What came of asking the AI to change a draft. `newStories` is only filled when the request was to
+// split it: the first part stays as `story` and the rest are new drafts on the same meeting.
+export interface EditRequestResult {
+  story: Story;
+  newStories: Story[];
+  summary: string;
+}
+
+export type StoryDecision ='accept' | 'reject' | 'restore';
 
 export interface ImportResult {
   storyId: string;
@@ -248,6 +256,7 @@ export type ExportStatus = 'pending' | 'completed' | 'failed';
 export interface ExportRecord {
   id: string;
   storyId: string;
+  storyTitle: string | null;
   idempotencyKey: string;
   externalCardId: string | null;
   status: ExportStatus;

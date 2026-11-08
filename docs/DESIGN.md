@@ -95,7 +95,7 @@ GET  /api/boards/{id}/analytics          health + trends
 
 ## Board adapters
 
-Interface: `connect`, `list_boards`, `list_columns`, `create_card(story, target, idempotency_key)`, `find_import_by_key`, `add_labels`, `attach_evidence_link`, optional `sync_card`.
+Interface: `connect`, `list_boards`, `list_columns`, `create_card(story, target)`, `find_existing_card`, `add_labels`, `attach_evidence_link`, optional `sync_card`.
 
 Import is manual by default. Auto-import is opt-in, goes only to Triage with an AI Draft label above a confidence threshold, and checks for duplicates first. Reprocessing a meeting never overwrites a card a human edited.
 

@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS: Settings = {
   webAppUrl: 'http://localhost:5173',
 
   creativity: 'balanced',
-  model: 'gemini-2.5-flash',
+  model: '', // empty means the server's own default model
 
   autoImport: false,
   autoImportThreshold: 0.85,

@@ -26,22 +26,6 @@ def _get_ai_draft_label(client: TrelloClient, trello_board_id: str) -> str:
     return label["id"]
 
 
-def _add_card_details(
-    client: TrelloClient,
-    card_id: str,
-    label_id: str,
-    evidence_url: str,
-) -> None:
-    """Add the label and avoid attaching the same evidence link twice."""
-    client.add_label(card_id, label_id)
-
-    for attachment in client.list_attachments(card_id):
-        if attachment.get("url") == evidence_url:
-            return
-
-    client.attach_evidence_link(card_id, evidence_url)
-
-
 def _ensure_story_checklists(client: TrelloClient, card_id: str, draft: DraftStory) -> None:
     """Add missing items without resetting checks or duplicating text."""
     checklists = client.list_checklists(card_id)
@@ -114,8 +98,20 @@ def _export_story(
         import_key = import_record.idempotency_key
         card_id = import_record.external_card_id
 
+    # The same text is used to look for an earlier card and to create the card, so a card whose
+    # creation was cut off can be recognized without writing anything extra onto it.
+    description = client.format_story(draft)
     if card_id is None:
-        existing_card = client.find_import_by_key(trello_board_id, import_key)
+        # Cards that belong to other stories' imports can never be this story's card.
+        linked_cards = session.exec(
+            select(Import.external_card_id).where(
+                Import.external_card_id.is_not(None), Import.story_id != story.id,
+            )
+        ).all()
+        existing_card = client.find_existing_card(
+            trello_board_id, draft.title, description,
+            exclude_ids=set(linked_cards), legacy_key=import_key,
+        )
         if existing_card is not None:
             card_id = existing_card["id"]
         elif import_record is not None and import_record.status == "pending":
@@ -134,7 +130,7 @@ def _export_story(
     label_id = _get_ai_draft_label(client, trello_board_id)
 
     # Save our intent before asking Trello to create anything. If the request
-    # times out, the next attempt will see pending and search for the marker.
+    # times out, the next attempt will see pending and search for the card.
     if import_record is None:
         import_record = Import(story_id=story.id, idempotency_key=import_key)
         session.add(import_record)
@@ -152,13 +148,7 @@ def _export_story(
         return ImportRead.model_validate(import_record)
     card_id = import_record.external_card_id
     if card_id is None:
-        description = client.format_story(draft)
-        card = client.create_card(
-            body.list_id,
-            draft.title,
-            description,
-            idempotency_key=import_key,
-        )
+        card = client.create_card(body.list_id, draft.title, description)
         card_id = card["id"]
         import_record.external_card_id = card_id
 
@@ -171,7 +161,7 @@ def _export_story(
             return ImportRead.model_validate(import_record)
 
     _ensure_story_checklists(client, card_id, draft)
-    _add_card_details(client, card_id, label_id, str(body.evidence_url))
+    client.add_label(card_id, label_id)
 
     # Finish the database changes together: import, story, and analytics event.
     import_record.status = "completed"

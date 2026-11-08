@@ -103,7 +103,7 @@ def _export(session, client, board_id, body):
             **body.additional_fields,
             "project": {"id": project_id}, "issuetype": {"id": body.issue_type_id},
             "summary": draft.title,
-            "description": client.format_story(draft, str(body.evidence_url)),
+            "description": client.format_story(draft),
             "labels": ["ai-draft", marker],
         }
         try:

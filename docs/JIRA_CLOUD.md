@@ -101,7 +101,6 @@ POST /api/boards/{database_board_id}/imports
 {
   "story_id": "STORY_UUID",
   "issue_type_id": "10002",
-  "evidence_url": "https://your-app.example/meetings/MEETING_UUID",
   "additional_fields": {
     "customfield_10010": "A value required by your project"
   }
@@ -116,7 +115,8 @@ validates field values and the account's permissions.
 
 The issue gets the story title, an Atlassian Document Format description with
 acceptance criteria and proposed solution tasks in separate checkbox-style lists,
-evidence text and a source link, and the labels `ai-draft`
+the source quote with the time in the recording where it begins (for example
+`Source Quote: "..." (2:14)`), and the labels `ai-draft`
 and `backlogger-story-STORY_UUID`. Priority and estimates are included as text;
 mapping them to Jira priority/story-point fields requires the appropriate values
 in `additional_fields`. Jira chooses the issue's initial workflow status; the

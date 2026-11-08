@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnalyticsTab } from '@/components/AnalyticsTab';
 import { DraftsTab } from '@/components/DraftsTab';
+import { Icon, type IconName } from '@/components/Icon';
 import { RecordTab } from '@/components/RecordTab';
 import { SettingsTab } from '@/components/SettingsTab';
 import {
@@ -14,6 +15,7 @@ import {
   pickDefaultIssueType,
 } from '@/lib/jira';
 import { boardNoun, boardProvider } from '@/lib/provider';
+import { getModels } from '@/lib/api';
 import { closeConnectTab } from '@/lib/connectTab';
 import { forgetProvider, settingsItem } from '@/lib/storage';
 import { getTrelloConnection, listTrelloBoards, listTrelloLists } from '@/lib/trello';
@@ -22,11 +24,11 @@ import { useAutoReload, useLoad } from '@/lib/useLoad';
 import { useStorageItem } from '@/lib/useStorageItem';
 
 const TABS = [
-  { id: 'record', label: 'Record' },
-  { id: 'drafts', label: 'Drafts' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'settings', label: 'Settings' },
-] as const;
+  { id: 'record', label: 'Record', icon: 'record' },
+  { id: 'drafts', label: 'Drafts', icon: 'drafts' },
+  { id: 'analytics', label: 'Analytics', icon: 'analytics' },
+  { id: 'settings', label: 'Settings', icon: 'settings' },
+] as const satisfies ReadonlyArray<{ id: string; label: string; icon: IconName }>;
 
 type TabId = (typeof TABS)[number]['id'];
 
@@ -60,6 +62,21 @@ export default function App() {
   // Once either one is connected the other can't be, so there's nothing to wait for.
   useAutoReload(connection.reload, 3000, !connected && !jiraConnected);
   useAutoReload(jiraConnection.reload, 3000, !connected && !jiraConnected);
+
+  // The models the server offers. A saved model it no longer offers (an old default, say) would
+  // be rejected when processing starts, so it goes back to the server's default.
+  const models = useLoad(
+    () => (apiUrl === undefined ? Promise.resolve(undefined) : getModels({ apiUrl, apiToken: apiToken ?? '' })),
+    [apiUrl, apiToken],
+  );
+  const savedModel = settings?.model;
+  const offeredModels = models.data?.models;
+  useEffect(() => {
+    if (!savedModel || !offeredModels || offeredModels.includes(savedModel)) return;
+    void settingsItem.getValue().then((latest) => {
+      if (latest.model === savedModel) return settingsItem.setValue({ ...latest, model: '' });
+    });
+  }, [savedModel, offeredModels]);
 
   // the tab Connect opened has nothing left to show once the connection is saved
   useEffect(() => {
@@ -194,15 +211,20 @@ export default function App() {
 
   return (
     <main className="panel">
-      <header>
-        <h1>Backlogger</h1>
-        <p className="hint">
-          {board.connected ? `${boardNoun(selectedBoard)}: ${board.boardName}` : 'No board or project selected'}
-        </p>
+      <header className="app-header">
+        <span className="app-logo" aria-hidden="true">
+          <Icon name="logo" size={22} />
+        </span>
+        <div className="app-title">
+          <h1>Backlogger</h1>
+          <p className="hint">
+            {board.connected ? `${boardNoun(selectedBoard)}: ${board.boardName}` : 'No board or project selected'}
+          </p>
+        </div>
       </header>
 
       <nav className="tabs" role="tablist">
-        {TABS.map(({ id, label }) => (
+        {TABS.map(({ id, label, icon }) => (
           <button
             key={id}
             role="tab"
@@ -210,6 +232,7 @@ export default function App() {
             className={tab === id ? 'tab active' : 'tab'}
             onClick={() => setTab(id)}
           >
+            <Icon name={icon} />
             {label}
           </button>
         ))}
@@ -234,6 +257,7 @@ export default function App() {
             connection={connection}
             boards={boards}
             lists={lists}
+            models={models}
             jira={{
               connection: jiraConnection,
               sites: {
