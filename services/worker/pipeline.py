@@ -14,6 +14,7 @@ import json
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -26,6 +27,9 @@ from .objects import CritiqueResult, ExtractionResult, Transcript
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
 from .prompts.extract import CreativityLevel, get_extract_prompt
 from .prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
+
+# Explicit audio types for extensions Python's mimetypes labels as video.
+AUDIO_MIME_TYPES = {".webm": "audio/webm", ".mp4": "audio/mp4", ".m4a": "audio/mp4"}
 
 def _run_pipeline(
     audio_path: str,
@@ -42,7 +46,12 @@ def _run_pipeline(
     client = genai.Client()
 
     # Upload the audio and wait until Gemini has finished processing it
-    audio_file = client.files.upload(file=audio_path)
+    # The SDK guesses the type from the extension, and mimetypes maps .webm to
+    # video/webm, which Gemini fails to process for audio-only recordings.
+    mime_type = AUDIO_MIME_TYPES.get(Path(audio_path).suffix.lower())
+    audio_file = client.files.upload(
+        file=audio_path, config={"mime_type": mime_type} if mime_type else None,
+    )
     while audio_file.state.name == "PROCESSING":
         time.sleep(2)
         audio_file = client.files.get(name=audio_file.name)

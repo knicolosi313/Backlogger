@@ -39,7 +39,7 @@ def test_all_passes_use_the_right_prompt_schema_and_previous_results(gemini, pip
     results = pipeline._run_pipeline("synthetic.wav", "test-model", save_stage)
 
     assert results == pipeline_results
-    gemini.files.upload.assert_called_once_with(file="synthetic.wav")
+    gemini.files.upload.assert_called_once_with(file="synthetic.wav", config=None)
     calls = gemini.models.generate_content.call_args_list
     assert len(calls) == 3
     expected_prompts = [TRANSCRIBE_SYSTEM_PROMPT, EXTRACT_SYSTEM_PROMPT, CRITIQUE_SYSTEM_PROMPT]
@@ -70,6 +70,18 @@ def test_standalone_pipeline_returns_results_without_database(gemini, pipeline_r
 
     assert pipeline.run_pipeline("synthetic.wav") == pipeline_results
     engine.assert_not_called()
+
+
+@pytest.mark.parametrize("filename, mime_type", [
+    ("meeting.webm", "audio/webm"), ("MEETING.WEBM", "audio/webm"), ("meeting.m4a", "audio/mp4"),
+])
+def test_uploads_audio_only_containers_with_an_audio_mime_type(gemini, filename, mime_type):
+    # The SDK guesses video/webm for .webm, which Gemini fails to process as audio.
+    pipeline._run_pipeline(f"media/abc/{filename}", "test-model")
+
+    gemini.files.upload.assert_called_once_with(
+        file=f"media/abc/{filename}", config={"mime_type": mime_type},
+    )
 
 
 def test_waits_until_uploaded_audio_is_ready(gemini):

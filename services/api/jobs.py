@@ -54,8 +54,8 @@ def process_meeting(
                 ))
             meeting.status = "completed"
     except Exception:
-        # Keep exception details out of API responses; raw completed stages remain saved.
-        logger.error("Meeting %s processing failed", meeting_id)
+        # Keep exception details out of API responses (logs only); raw completed stages remain saved.
+        logger.exception("Meeting %s processing failed", meeting_id)
         try:
             with Session(get_engine()) as session, session.begin():
                 meeting = session.get(Meeting, meeting_id)

@@ -103,6 +103,10 @@ def test_complete_upload_process_edit_and_review_workflow(
     assert len(stories) == 1
     story = stories[0]
     story_url = f"/api/stories/{story['id']}"
+    by_meeting = api.get(f"/api/boards/{board_id}/stories", params={"meeting_id": meeting_id}).json()
+    assert by_meeting == stories
+    other_meeting = create_meeting(api, board_id)["id"]
+    assert api.get(f"/api/boards/{board_id}/stories", params={"meeting_id": other_meeting}).json() == []
     assert story["draft"] == pipeline_results[1].stories[0].model_dump()
     assert story["critique"] == pipeline_results[2].reviews[0].model_dump()
     assert api.get(story_url).json() == story
@@ -117,6 +121,10 @@ def test_complete_upload_process_edit_and_review_workflow(
     assert analytics["draft_outcome_percentages"] == {"accepted": 100.0, "edited": 0.0, "rejected": 0.0}
     assert analytics["average_invest_score"] == 5.0
     assert sum(event["count"] for event in analytics["daily_events"] if event["event_type"] == "story_accepted") == 1
+    # The critique flags "Testable" once; a good, accepted story is not pending, so nothing needs attention.
+    assert analytics["invest_issues"]["testable"] == 1
+    assert sum(analytics["invest_issues"].values()) == 1
+    assert analytics["needs_attention"] == []
 
     edited_draft = {**story["draft"], "title": "Human edited title"}
     response = api.patch(story_url, json={"draft": edited_draft})
@@ -128,6 +136,9 @@ def test_complete_upload_process_edit_and_review_workflow(
     assert edited_story["critique"] is None
     analytics = api.get(f"/api/boards/{board_id}/analytics").json()
     assert analytics["draft_outcome_percentages"] == {"accepted": 0.0, "edited": 100.0, "rejected": 0.0}
+    # An edit clears the scores and critique, so the old flag no longer counts.
+    assert analytics["invest_issues"]["testable"] == 0
+    assert analytics["needs_attention"] == []
     revisions = api.get(f"{story_url}/revisions").json()
     assert [revision["revision"] for revision in revisions] == [1, 2]
     assert [revision["editor"] for revision in revisions] == ["ai", "human"]
@@ -176,6 +187,51 @@ def test_draft_outcome_percentages_count_stories_once_and_exclude_other_boards(
     assert analytics["draft_outcome_percentages"] == {"accepted": 50.0, "edited": 25.0, "rejected": 25.0}
     # The existing acceptance rate still counts accepted stories that were edited.
     assert analytics["acceptance_rate"] == 0.75
+
+
+def test_analytics_flags_issues_and_pending_stories_needing_attention(api, database_connection, pipeline_results):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    other_meeting = create_meeting(api, create_board(api)["id"])
+    draft = pipeline_results[1].stories[0].model_dump(mode="json")
+    review = pipeline_results[2].reviews[0].model_dump(mode="json")
+
+    def flagged(*criteria):
+        return {**review, "flags": [{"criterion": c, "issue": "x"} for c in criteria]}
+
+    with Session(bind=database_connection, join_transaction_mode="create_savepoint") as session:
+        rows = [
+            # (meeting, status, invest_score, confidence, critique, title)
+            (meeting, "draft", 2, 0.9, flagged("Small", "Small", "Grounded"), "Low quality"),
+            (meeting, "needs_changes", 6, 0.3, flagged(), "Low confidence"),
+            (meeting, "draft", 6, 0.9, flagged("Small"), "Fine"),
+            (meeting, "draft", None, None, None, "Edited, unscored"),
+            (meeting, "draft", 6, 0.9, flagged(), "No quote"),
+            (meeting, "accepted", 1, 0.1, flagged("Testable"), "Accepted but weak"),
+            (meeting, "rejected", 0, 0.0, flagged("Small", "Testable"), "Rejected"),
+            (other_meeting, "draft", 0, 0.0, flagged("Small"), "Other board"),
+        ]
+        for target, status, score, confidence, critique, title in rows:
+            story_draft = {**draft, "title": title}
+            if title == "No quote":
+                story_draft["source"] = {**draft["source"], "quote": "  "}
+            session.add(Story(
+                meeting_id=target["id"], draft=story_draft, status=status,
+                invest_score=score, confidence=confidence, critique=critique,
+            ))
+        session.commit()
+
+    analytics = api.get(f"/api/boards/{board['id']}/analytics").json()
+    # A story counts once per criterion; rejected stories and other boards are left out.
+    assert analytics["invest_issues"] == {
+        "independent": 0, "negotiable": 0, "valuable": 0, "estimable": 0,
+        "small": 2, "testable": 1, "grounded": 1,
+    }
+    # Only pending stories with a low score or confidence, and unscored edits are not "low".
+    assert sorted((item["title"], item["reason"]) for item in analytics["needs_attention"]) == [
+        ("Low confidence", "Low confidence"), ("Low quality", "Low INVEST quality"),
+        ("No quote", "No evidence from the meeting"),
+    ]
 
 
 def test_duplicate_board_registration_returns_conflict(api):

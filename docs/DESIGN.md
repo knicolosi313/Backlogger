@@ -26,9 +26,8 @@ A Chrome extension records a browser meeting next to a Trello board. A backend u
 
 ## Architecture
 
-
 | Piece        | Tech                                  |
-| -------------- | --------------------------------------- |
+| ------------ | ------------------------------------- |
 | Extension    | WXT + React + TypeScript              |
 | Web app      | React + shadcn/ui                     |
 | API + worker | FastAPI (Python)                      |
@@ -132,14 +131,14 @@ Import is manual by default. Auto-import is opt-in, goes only to Triage with an 
 
 ## Definition of done
 
-- [ ]  Capture or upload a meeting with clear status
-- [ ]  At least one story with criteria, critique, and timestamps
-- [ ]  Review actions persist (one revision and one rejection)
-- [ ]  An accepted story imports to Trello once, with no duplicate on retry
-- [ ]  Web app shows history and metrics from stored data
-- [ ]  A test shows an INVEST issue and its reviewer fix
-- [ ]  `docker compose up` works; README covers env setup
-- [ ]  Clear what's working vs. illustrative
+- [ ] Capture or upload a meeting with clear status
+- [ ] At least one story with criteria, critique, and timestamps
+- [ ] Review actions persist (one revision and one rejection)
+- [ ] An accepted story imports to Trello once, with no duplicate on retry
+- [ ] Web app shows history and metrics from stored data
+- [ ] A test shows an INVEST issue and its reviewer fix
+- [ ] `docker compose up` works; README covers env setup
+- [ ] Clear what's working vs. illustrative
 
 ## Open questions
 

@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Allow microphone</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 30rem; margin: 4rem auto; padding: 0 1rem; }
+      button { font: inherit; padding: 0.5rem 1rem; cursor: pointer; }
+      #result { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Allow microphone access</h1>
+    <p>
+      Meeting-to-Backlog records your microphone along with the meeting tab so your side of the
+      conversation is included. Chrome only lets us ask for this from a visible page.
+    </p>
+    <button id="allow">Allow microphone</button>
+    <p id="result" role="status"></p>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

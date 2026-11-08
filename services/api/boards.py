@@ -18,9 +18,13 @@ from .exports import export_story
 from .export_clients import get_export_client
 from .jira_exports import export_jira_story
 from .schemas import ImportCreate, ImportRead, JiraImportCreate
-from .schemas import BoardAnalytics, BoardCreate, DailyAnalytics, StoryRead, StoryStatus
+from .schemas import AttentionItem, BoardAnalytics, BoardCreate, DailyAnalytics, StoryRead, StoryStatus
 
 router = APIRouter(prefix="/api/boards", tags=["Boards"])
+
+# Pending stories at or below these need a human look first (INVEST score is 0-6, so 3 is 50%).
+LOW_INVEST_SCORE = 3
+LOW_CONFIDENCE = 0.6
 
 
 @router.post("/{board_id}/imports", response_model=ImportRead)
@@ -91,11 +95,14 @@ def list_stories(
     board_id: UUID,
     session: SessionDep,
     status: StoryStatus | None = None,
+    meeting_id: UUID | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
     get_record(session, Board, board_id)
     query = select(Story).join(Meeting).where(Meeting.board_id == board_id)
+    if meeting_id is not None:
+        query = query.where(Story.meeting_id == meeting_id)
     if status is not None:
         query = query.where(Story.status == status)
     return session.exec(
@@ -158,9 +165,43 @@ def board_analytics(
         )
         .group_by(day, AnalyticsEvent.event_type).order_by(day, AnalyticsEvent.event_type)
     ).all()
+    invest_issues = dict.fromkeys(
+        ["independent", "negotiable", "valuable", "estimable", "small", "testable", "grounded"], 0,
+    )
+    needs_attention = []
+    board_stories = session.exec(
+        select(Story).join(Meeting, Story.meeting_id == Meeting.id)
+        .where(Meeting.board_id == board_id, Story.status != "rejected")
+        .order_by(Story.created_at.desc(), Story.id)
+    ).all()
+    for story in board_stories:
+        # Count each story once per criterion, however many flags it has.
+        flagged = {
+            flag["criterion"].lower() for flag in (story.critique or {}).get("flags", [])
+            if isinstance(flag.get("criterion"), str)
+        }
+        for criterion in flagged & invest_issues.keys():
+            invest_issues[criterion] += 1
+
+        if story.status in {"draft", "needs_changes"} and len(needs_attention) < 20:
+            # Scores are null after a human edit; an unscored story is not "low".
+            if not str((story.draft.get("source") or {}).get("quote") or "").strip():
+                reason = "No evidence from the meeting"
+            elif story.invest_score is not None and story.invest_score <= LOW_INVEST_SCORE:
+                reason = "Low INVEST quality"
+            elif story.confidence is not None and story.confidence < LOW_CONFIDENCE:
+                reason = "Low confidence"
+            else:
+                continue
+            needs_attention.append(AttentionItem(
+                story_id=story.id, title=story.draft.get("title", "Untitled story"), reason=reason,
+            ))
+
     return BoardAnalytics(
         board_id=board_id,
         story_counts=counts,
+        invest_issues=invest_issues,
+        needs_attention=needs_attention,
         acceptance_rate=accepted / reviewed if reviewed else None,
         draft_outcome_counts=outcome_counts,
         draft_outcome_percentages=outcome_percentages,

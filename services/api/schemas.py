@@ -170,9 +170,23 @@ class DailyAnalytics(BaseModel):
     count: int
 
 
+class AttentionItem(BaseModel):
+    story_id: UUID
+    title: str
+    reason: str
+
+
 class BoardAnalytics(BaseModel):
     board_id: UUID
     story_counts: dict[str, int]
+    invest_issues: dict[str, int] = Field(
+        default_factory=dict,
+        description="Stories flagged per INVEST criterion (lowercase, plus 'grounded'); rejected stories excluded.",
+    )
+    needs_attention: list[AttentionItem] = Field(
+        default_factory=list,
+        description="Newest pending stories (draft/needs_changes) with low confidence or INVEST score, at most 20.",
+    )
     acceptance_rate: float | None
     draft_outcome_counts: dict[DraftOutcome, int]
     draft_outcome_percentages: dict[DraftOutcome, float] = Field(
