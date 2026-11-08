@@ -1,4 +1,4 @@
-# Meeting-to-Backlog
+# Backlogger
 
 > Your meeting ends, and your backlog is already drafted, checked, and linked back to the exact moment it was discussed.
 
@@ -26,6 +26,23 @@ Check database connectivity at `http://127.0.0.1:8000/health/db`. SQLModel table
 mappings are in `services/models.py`; session handling is in `services/db.py`.
 Apply the SQL migrations before using the API. See the database setup guide for
 queries, pipeline checkpoints, and test commands.
+
+API routes and an upload-to-review walkthrough: [services/api/README.md](services/api/README.md).
+Interactive API documentation: `http://127.0.0.1:8000/docs`.
+
+## Draft outcome analytics
+
+The board analytics endpoint (`GET /api/boards/{id}/analytics`) includes
+`draft_outcome_counts` and `draft_outcome_percentages` for `accepted`, `edited`,
+and `rejected`. Each story belongs to one outcome: rejected takes precedence,
+then a human revision makes it edited, otherwise accepted/imported means accepted
+as-is. Untouched draft/needs-changes stories are excluded. Edited stories awaiting
+a final decision count as edited. Multiple edits count once. Percentages use the
+sum of these three counts, range from 0 to 100, and are rounded to two decimals;
+all are zero when no stories have an outcome. Rounding may produce a total of
+99.99 or 100.01. These are all-time board metrics, independent of the event-history
+`days` filter. The existing `acceptance_rate` retains its separate definition,
+which includes edited stories that have been accepted.
 
 ## Layout
 

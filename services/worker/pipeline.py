@@ -99,12 +99,14 @@ def run_pipeline(
     model: str = "gemini-3.1-flash-lite",
     *,
     meeting_id: UUID | None = None,
+    mark_completed: bool = True,
 ):
     """Run Gemini; optionally checkpoint each stage for an existing meeting.
 
     With meeting_id, stages commit independently so later failures preserve earlier
     results. This saves raw outputs; creating reviewable Story rows is a separate
     application operation. Without meeting_id, no database connection is opened.
+    The API uses mark_completed=False until it has saved the reviewable stories.
     """
     if meeting_id is None:
         return _run_pipeline(audio_path, model)
@@ -137,7 +139,8 @@ def run_pipeline(
     set_status("processing")
     try:
         result = _run_pipeline(audio_path, model, save_stage)
-        set_status("completed")
+        if mark_completed:
+            set_status("completed")
     except Exception:
         # Preserve the original processing error if recording failure also fails.
         try:

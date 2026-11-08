@@ -49,7 +49,8 @@ The schema follows the current worker models. JSONB preserves their nested field
 without a second set of Python data models. Media stays in local/object storage.
 No sample meetings, users, or credentials are inserted. This is a single-workspace
 MVP schema; authentication, tenant isolation, encrypted integration credentials,
-continuous aggregates, and story materialization/review endpoints are subsequent work.
+continuous aggregates, and external board imports are subsequent work. The API
+now materializes story drafts and supports manual edits and review decisions.
 SQLModel updates `stories.updated_at` on ORM edits; direct SQL writers must update it.
 
 ## Python access with SQLModel
@@ -117,7 +118,10 @@ to `pipeline_outputs` under a shared run UUID. A later failure leaves earlier
 outputs available and marks the meeting failed; success marks it completed.
 Run only one pipeline at a time per meeting. Calls without `meeting_id` retain
 the standalone behavior and do not connect to the database. This does not yet
-populate `stories`, revisions, imports, or analytics events automatically.
+populate `stories`, revisions, imports, or analytics events automatically when
+called directly. The API's processing job wraps this pipeline and also creates
+reviewable stories, initial revisions, and analytics events before completion.
+See [the API guide](../../services/api/README.md).
 
 Run tests with:
 
