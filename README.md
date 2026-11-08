@@ -17,6 +17,11 @@ AI usage disclosure (hackathon requirement): [docs/AI_USAGE.md](docs/AI_USAGE.md
 - **Import** accepted stories to Trello (with checklists) or Jira Cloud (with required fields). Each connection is scoped to the browser. Optionally, confident stories import automatically.
 - **Track quality** with per-board analytics: INVEST scores, draft outcomes, and stories needing attention.
 - **Open from Trello or Jira** with a launcher button that opens the side panel.
+Policy drafts: [Privacy Policy](docs/legal/PRIVACY_POLICY.md) and
+[Terms of Service](docs/legal/TERMS_OF_SERVICE.md).
+See [publishing and operator review](docs/legal/README.md) before sharing them.
+
+Database setup: [infra/db/README.md](infra/db/README.md)
 
 ## Mockups
 

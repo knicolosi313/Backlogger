@@ -13,6 +13,9 @@ export default defineConfig({
       'activeTab', // granted when the toolbar icon is clicked
     ],
     host_permissions: [
+      'https://trello.com/*',
+      'https://www.trello.com/*',
+      'https://*.atlassian.net/*',
       'https://backlogger-production.up.railway.app/*',
       'http://localhost/*',
       'http://127.0.0.1/*',

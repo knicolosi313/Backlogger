@@ -25,3 +25,12 @@ existing Trello/Jira tabs to load the new content script. Opening a website does
 not automatically open the panel. Opening from a page button also does not grant
 the `activeTab` permission used for recording; Chrome may still require invoking
 Backlogger through its toolbar icon before recording a meeting tab.
+
+For the development build (`.output/chrome-mv3-dev`), keep `npm run dev` running
+from `apps/extension`, reload the extension in Chrome if needed, then refresh the
+Jira or Trello tab. Atlassian's consent pages on `api.atlassian.com` are not Jira
+workspace pages and do not show the launcher. Finish authorization and open your
+`https://your-team.atlassian.net/jira/...` workspace instead.
+
+The launcher uses WXT's navigation event URL so it updates correctly even when
+the event arrives before the browser's location changes.
