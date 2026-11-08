@@ -22,7 +22,13 @@ class DraftStory(BaseModel):
     as_a: str
     i_want: str
     so_that: str
-    acceptance_criteria: list[str]
+    acceptance_criteria: list[str] = Field(
+        description="Distinct testable checklist items; aim for 2–6 when supported by the transcript"
+    )
+    solution_tasks: list[str] = Field(
+        default_factory=list,
+        description="Proposed actionable implementation steps, separate from acceptance criteria",
+    )
     epic: Optional[str] = None
     priority: Literal["high", "med", "low"]
     estimate: Optional[int] = None

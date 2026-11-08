@@ -11,7 +11,35 @@ AI usage disclosure (hackathon requirement): [docs/AI_USAGE.md](docs/AI_USAGE.md
 
 Database setup: [infra/db/README.md](infra/db/README.md)
 
+## Mockups
+
+Design concepts for the companion dashboard and Chrome extension. Screen content
+and metrics are illustrative.
+
+### Analytics dashboard
+
+![Companion dashboard with board overview, story quality trends, draft outcomes, and recent meetings](docs/mockups/analytics-dashboard.png)
+
+### Meeting recording
+
+![Chrome extension recording panel with meeting platform selection and consent reminder](docs/mockups/extension-recording.png)
+
+### Draft review
+
+![Chrome extension draft review with user stories, acceptance criteria, and review actions](docs/mockups/extension-draft-review.png)
+
+### Extension analytics
+
+![Chrome extension analytics panel showing board quality and stories needing attention](docs/mockups/extension-analytics.png)
+
+### Extension settings
+
+![Chrome extension settings for AI configuration, import preferences, recording, and integrations](docs/mockups/extension-settings.png)
+
 ## Backend development
+
+Connect a Trello account: [docs/TRELLO_CONNECT.md](docs/TRELLO_CONNECT.md).
+Connect Jira Cloud and export stories: [docs/JIRA_CLOUD.md](docs/JIRA_CLOUD.md).
 
 The Python backend uses SQLModel with Psycopg 3 to access TigerData. Copy
 `.env.example` to `.env` and set `DATABASE_URL` and `GEMINI_API_KEY`, then run:
@@ -35,6 +63,9 @@ Trello export configuration, request examples, and retry behavior:
 
 Frontend board/list selection and export-status endpoints:
 [docs/FRONTEND_API.md](docs/FRONTEND_API.md).
+
+Story-generation creativity levels and splitting rules:
+[docs/STORY_CREATIVITY.md](docs/STORY_CREATIVITY.md).
 
 ## Draft outcome analytics
 

@@ -1,6 +1,8 @@
 param(
     [ValidateSet('Check', 'Apply')]
-    [string]$Action = 'Check'
+    [string]$Action = 'Check',
+    [ValidatePattern('^\d+_[a-z_]+\.sql$')]
+    [string]$Migration = '001_initial.sql'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,7 +67,7 @@ try {
     )
 
     if ($Action -eq 'Apply') {
-        $migrationPath = Join-Path $PSScriptRoot '001_initial.sql'
+        $migrationPath = Join-Path $PSScriptRoot $Migration
         $psqlArguments += "--file=$migrationPath"
     } else {
         $checkQuery = @'

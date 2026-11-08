@@ -1,4 +1,4 @@
-# Meeting-to-Backlog: Design
+# Backlogger: Design
 
 HACK.COMS hackathon project, Nov 2026.
 

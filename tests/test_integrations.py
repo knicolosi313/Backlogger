@@ -7,7 +7,8 @@ import requests
 from fastapi.testclient import TestClient
 
 from adapters.trello.client import TrelloClient
-from services.api import exports
+from services.api import trello_auth
+from services.db import get_session
 from services.api.exports import get_trello_client
 from services.api.server import app
 
@@ -90,9 +91,13 @@ def test_invalid_external_id_is_rejected_before_calling_trello(discovery):
 
 
 def test_missing_configuration_returns_503(monkeypatch):
-    monkeypatch.setattr(exports, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trello_auth, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("TRELLO_API_KEY", raising=False)
-    monkeypatch.delenv("TRELLO_TOKEN", raising=False)
-    with TestClient(app) as api:
-        response = api.get("/api/integrations/trello/boards")
+    previous_overrides = app.dependency_overrides.copy()
+    app.dependency_overrides[get_session] = lambda: Mock()
+    try:
+        with TestClient(app) as api:
+            response = api.get("/api/integrations/trello/boards")
+    finally:
+        app.dependency_overrides = previous_overrides
     assert response.status_code == 503

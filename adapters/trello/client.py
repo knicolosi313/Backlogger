@@ -28,6 +28,10 @@ class TrelloClient:
         """Return the boards accessible to this Trello account."""
         return self._request("GET", "members/me/boards")
 
+    def get_current_member(self):
+        """Validate the connected token and identify its Trello account."""
+        return self._request("GET", "members/me", params={"fields": "id,username"})
+
     def list_lists(self, board_id: str):
         """Return the open lists on a Trello board."""
         return self._request("GET", f"boards/{board_id}/lists", params={"filter": "open"})
@@ -59,6 +63,18 @@ class TrelloClient:
         """Read existing evidence links before retrying an attachment request."""
         return self._request("GET", f"cards/{card_id}/attachments")
 
+    def list_checklists(self, card_id: str):
+        """Include all items so retries can preserve completed checks."""
+        return self._request("GET", f"cards/{card_id}/checklists", params={"checkItems": "all"})
+
+    def create_checklist(self, card_id: str, name: str):
+        return self._request("POST", f"cards/{card_id}/checklists", params={"name": name})
+
+    def add_checklist_item(self, checklist_id: str, name: str):
+        return self._request(
+            "POST", f"checklists/{checklist_id}/checkItems", params={"name": name, "checked": "false"},
+        )
+
     def create_card(
         self,
         list_id: str,
@@ -82,13 +98,13 @@ class TrelloClient:
 
     @staticmethod
     def format_story(story: DraftStory) -> str:
-        """Turn a story into a card description."""
+        """Format story context; the export service creates the actual checklists."""
         description = (
             f"As a {story.as_a}, I want {story.i_want} so that {story.so_that}\n\n"
-            f"Acceptance Criteria:\n"
+            "Acceptance criteria are in the Acceptance Criteria checklist.\n"
         )
-        for criterion in story.acceptance_criteria:
-            description += f"- {criterion}\n"
+        if story.solution_tasks:
+            description += "Proposed work steps are in the Solution Tasks (proposed) checklist.\n"
         if story.epic:
             description += f"\nEpic: {story.epic}\n"
         description += f"\nPriority: {story.priority}\n"

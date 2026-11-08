@@ -65,7 +65,7 @@ def test_pipeline_without_meeting_does_not_connect(monkeypatch):
 
     expected = ("transcript", "extraction", "critique")
     monkeypatch.setattr(pipeline, "get_engine", fail_if_connected)
-    monkeypatch.setattr(pipeline, "_run_pipeline", lambda *args: expected)
+    monkeypatch.setattr(pipeline, "_run_pipeline", lambda *args, **kwargs: expected)
     assert pipeline.run_pipeline("sample.wav") == expected
 
 
@@ -150,7 +150,7 @@ def test_pipeline_stage_checkpoints_survive_failure(
         session.commit()
         meeting_id = meeting.id
 
-    def fake_gemini(audio_path, model, save_stage):
+    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced"):
         transcript = Transcript(language="en", segments=[])
         save_stage("transcribe", transcript)
         if should_fail:

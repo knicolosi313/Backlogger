@@ -8,18 +8,22 @@ from sqlmodel import Session
 from services.db import get_engine
 from services.models import AnalyticsEvent, Meeting, Story, StoryRevision
 from services.worker.pipeline import run_pipeline
+from services.worker.prompts.extract import CreativityLevel
 
 from .media import media_path
 
 logger = logging.getLogger(__name__)
 
 
-def process_meeting(meeting_id: UUID, media_key: str, model: str) -> None:
+def process_meeting(
+    meeting_id: UUID, media_key: str, model: str, creativity: CreativityLevel = "balanced",
+) -> None:
     """Save raw pipeline outputs, then create reviewable drafts in one transaction."""
     try:
         _, extraction, critique = run_pipeline(
             str(media_path(media_key)), model=model, meeting_id=meeting_id,
             mark_completed=False,
+            creativity=creativity,
         )
         reviews = {review.index: review for review in critique.reviews}
         if len(reviews) != len(critique.reviews) or set(reviews) != set(range(len(extraction.stories))):

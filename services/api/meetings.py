@@ -8,11 +8,12 @@ from sqlmodel import select
 
 from services.models import Board, Meeting, PipelineOutput
 from services.worker.objects import Transcript
+from services.worker.prompts.extract import get_extract_prompt
 
 from .dependencies import SessionDep, get_record
 from .jobs import process_meeting
 from .media import media_path, save_audio
-from .schemas import MeetingCreate, MeetingStatus, ProcessAccepted
+from .schemas import MeetingCreate, MeetingStatus, ProcessAccepted, ProcessOptions
 
 router = APIRouter(prefix="/api/meetings", tags=["Meetings"])
 
@@ -69,7 +70,10 @@ def upload_media(meeting_id: UUID, file: UploadFile, session: SessionDep):
 
 
 @router.post("/{meeting_id}/process", response_model=ProcessAccepted, status_code=202)
-def start_processing(meeting_id: UUID, tasks: BackgroundTasks, session: SessionDep):
+def start_processing(
+    meeting_id: UUID, tasks: BackgroundTasks, session: SessionDep,
+    options: ProcessOptions | None = None,
+):
     meeting = get_record(session, Meeting, meeting_id, lock=True)
     if meeting.status not in {"uploaded", "failed"}:
         raise HTTPException(status_code=409, detail="Meeting is already processing or completed")
@@ -78,12 +82,21 @@ def start_processing(meeting_id: UUID, tasks: BackgroundTasks, session: SessionD
     if not os.getenv("GEMINI_API_KEY"):
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
 
+    creativity = options.creativity if options is not None else None
+    if creativity is None:
+        creativity = os.getenv("DEFAULT_CREATIVITY") or "balanced"
+    try:
+        get_extract_prompt(creativity)
+    except ValueError:
+        raise HTTPException(status_code=503, detail="DEFAULT_CREATIVITY is not a supported creativity level") from None
+
     media_key = meeting.media_key
     meeting.status = "processing"
     session.commit()
     tasks.add_task(
         process_meeting, meeting_id, media_key,
         os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-lite",
+        creativity,
     )
     return ProcessAccepted(
         meeting_id=meeting_id, status="processing", status_url=f"/api/meetings/{meeting_id}",

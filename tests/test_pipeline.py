@@ -9,7 +9,7 @@ from google import genai
 
 from services.worker import pipeline
 from services.worker.prompts.critique import CRITIQUE_SYSTEM_PROMPT
-from services.worker.prompts.extract import EXTRACT_SYSTEM_PROMPT
+from services.worker.prompts.extract import EXTRACT_PROMPTS, EXTRACT_SYSTEM_PROMPT
 from services.worker.prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
 
 
@@ -119,3 +119,28 @@ def test_checkpoint_failure_stops_pipeline(gemini):
         pipeline._run_pipeline("synthetic.wav", "test-model", save_stage)
 
     assert gemini.models.generate_content.call_count == 1
+
+
+@pytest.mark.parametrize("creativity", ["conservative", "balanced", "creative", "exploratory"])
+def test_creativity_changes_only_the_story_generation_prompt(gemini, creativity):
+    pipeline.run_pipeline("synthetic.wav", creativity=creativity)
+    calls = gemini.models.generate_content.call_args_list
+    assert calls[0].kwargs["config"].system_instruction == TRANSCRIBE_SYSTEM_PROMPT
+    assert calls[1].kwargs["config"].system_instruction == EXTRACT_PROMPTS[creativity]
+    assert calls[2].kwargs["config"].system_instruction == CRITIQUE_SYSTEM_PROMPT
+
+
+def test_pipeline_uses_configured_creativity_default(gemini, monkeypatch):
+    monkeypatch.setenv("DEFAULT_CREATIVITY", "creative")
+    pipeline.run_pipeline("synthetic.wav")
+    request = gemini.models.generate_content.call_args_list[1]
+    assert request.kwargs["config"].system_instruction == EXTRACT_PROMPTS["creative"]
+
+
+def test_unknown_creativity_fails_before_upload_or_database(gemini, monkeypatch):
+    engine = Mock(side_effect=AssertionError("Unexpected database connection"))
+    monkeypatch.setattr(pipeline, "get_engine", engine)
+    with pytest.raises(ValueError, match="Choose conservative"):
+        pipeline.run_pipeline("synthetic.wav", creativity="unknown")
+    gemini.files.upload.assert_not_called()
+    engine.assert_not_called()

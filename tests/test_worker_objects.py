@@ -54,3 +54,19 @@ def test_review_accepts_score_boundaries(pipeline_results):
 def test_invest_flag_rejects_unknown_criterion():
     with pytest.raises(ValidationError):
         InvestFlag(criterion="Popularity", issue="Not an INVEST criterion")
+
+
+def test_legacy_story_without_solution_tasks_still_loads(pipeline_results):
+    data = pipeline_results[1].stories[0].model_dump()
+    data.pop("solution_tasks")
+    data["acceptance_criteria"] = ["Existing single criterion"]
+    story = DraftStory.model_validate(data)
+    assert story.solution_tasks == []
+    assert story.acceptance_criteria == ["Existing single criterion"]
+
+
+def test_solution_tasks_are_preserved_in_story_json(pipeline_results):
+    story = pipeline_results[1].stories[0]
+    restored = DraftStory.model_validate_json(story.model_dump_json())
+    assert len(restored.acceptance_criteria) == 2
+    assert restored.solution_tasks == ["Add the password reset request flow", "Implement reset email delivery"]

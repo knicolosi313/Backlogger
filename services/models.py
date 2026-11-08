@@ -1,4 +1,4 @@
-"""SQLModel mappings for infra/db/001_initial.sql.
+"""SQLModel mappings for the numbered SQL migrations in infra/db.
 
 Run SQL migrations rather than metadata.create_all(): they also manage TimescaleDB
 and database constraints. Replace JSON dictionaries to persist edits; in-place
@@ -138,6 +138,38 @@ class AnalyticsEvent(SQLModel, table=True):
         sa_type=JSONB,
         sa_column_kwargs={"server_default": text("'{}'::jsonb")},
     )
+
+
+class TrelloConnection(Record, table=True):
+    """One browser's encrypted Trello token and short-lived connection challenge."""
+
+    __tablename__ = "trello_connections"
+    __table_args__ = {"schema": "backlogger"}
+
+    session_hash: str = Field(sa_type=Text, unique=True)
+    encrypted_token: str | None = Field(default=None, sa_type=Text)
+    member_id: str | None = Field(default=None, sa_type=Text)
+    username: str | None = Field(default=None, sa_type=Text)
+    connected_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    expires_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    state_hash: str | None = Field(default=None, sa_type=Text)
+    state_expires_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+class JiraConnection(Record, table=True):
+    """A browser's encrypted Atlassian access/refresh tokens and OAuth state."""
+
+    __tablename__ = "jira_connections"
+    __table_args__ = {"schema": "backlogger"}
+
+    session_hash: str = Field(sa_type=Text, unique=True)
+    encrypted_token: str | None = Field(default=None, sa_type=Text)
+    encrypted_refresh_token: str | None = Field(default=None, sa_type=Text)
+    account_id: str | None = Field(default=None, sa_type=Text)
+    display_name: str | None = Field(default=None, sa_type=Text)
+    expires_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    state_hash: str | None = Field(default=None, sa_type=Text)
+    state_expires_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class SchemaMigration(SQLModel, table=True):

@@ -22,7 +22,7 @@ def api(database_connection, monkeypatch, tmp_path, pipeline_results):
         with new_session() as session:
             yield session
 
-    def fake_gemini(audio_path, model, save_stage):
+    def fake_gemini(audio_path, model, save_stage, *, creativity="balanced"):
         for stage, output in zip(["transcribe", "extract", "critique"], pipeline_results):
             save_stage(stage, output)
         return pipeline_results
@@ -224,7 +224,7 @@ def test_processing_claim_prevents_duplicate_job_and_upload(api, monkeypatch):
 
 
 def test_model_failure_records_failed_status_and_keeps_transcript(api, monkeypatch, pipeline_results):
-    def fail_after_transcribe(audio_path, model, save_stage):
+    def fail_after_transcribe(audio_path, model, save_stage, *, creativity="balanced"):
         save_stage("transcribe", pipeline_results[0])
         raise RuntimeError("Synthetic model failure")
 
@@ -283,3 +283,37 @@ def test_invalid_requests_return_422_without_database(method, path, body):
         assert response.status_code == 422
     finally:
         app.dependency_overrides = previous_overrides
+
+
+@pytest.mark.parametrize("selected,configured,expected", [
+    ("conservative", "balanced", "conservative"),
+    ("balanced", "creative", "balanced"),
+    ("creative", "balanced", "creative"),
+    ("exploratory", "balanced", "exploratory"),
+    (None, "creative", "creative"),
+])
+def test_processing_passes_creativity_selection_to_job(api, monkeypatch, selected, configured, expected):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    url = f"/api/meetings/{meeting['id']}"
+    assert api.post(f"{url}/media", files={"file": ("test.wav", b"synthetic", "audio/wav")}).status_code == 200
+    received_levels = []
+    monkeypatch.setenv("DEFAULT_CREATIVITY", configured)
+    monkeypatch.setattr(meetings, "process_meeting", lambda meeting_id, key, model, creativity: received_levels.append(creativity))
+    if selected is None:
+        response = api.post(f"{url}/process")
+    else:
+        response = api.post(f"{url}/process", json={"creativity": selected})
+    assert response.status_code == 202, response.text
+    assert received_levels == [expected]
+
+
+def test_invalid_creativity_does_not_start_processing(api, monkeypatch):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    url = f"/api/meetings/{meeting['id']}"
+    api.post(f"{url}/media", files={"file": ("test.wav", b"synthetic", "audio/wav")})
+    assert api.post(f"{url}/process", json={"creativity": "unknown"}).status_code == 422
+    monkeypatch.setenv("DEFAULT_CREATIVITY", "unknown")
+    assert api.post(f"{url}/process").status_code == 503
+    assert api.get(url).json()["status"] == "uploaded"

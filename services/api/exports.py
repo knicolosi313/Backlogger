@@ -1,11 +1,8 @@
 """Coordinate accepted-story exports between PostgreSQL and Trello."""
 
-import os
-from pathlib import Path
 from uuid import UUID
 
 import requests
-from dotenv import load_dotenv
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -16,17 +13,7 @@ from services.worker.objects import DraftStory
 
 from .dependencies import get_record
 from .schemas import ImportCreate, ImportRead
-
-
-def get_trello_client() -> TrelloClient:
-    project_root = Path(__file__).resolve().parents[2]
-    load_dotenv(project_root / ".env", override=False)
-
-    api_key = os.getenv("TRELLO_API_KEY")
-    token = os.getenv("TRELLO_TOKEN")
-    if not api_key or not token:
-        raise HTTPException(status_code=503, detail="Configure TRELLO_API_KEY and TRELLO_TOKEN")
-    return TrelloClient(api_key, token)
+from .trello_auth import get_trello_client
 
 
 def _get_ai_draft_label(client: TrelloClient, trello_board_id: str) -> str:
@@ -53,6 +40,26 @@ def _add_card_details(
             return
 
     client.attach_evidence_link(card_id, evidence_url)
+
+
+def _ensure_story_checklists(client: TrelloClient, card_id: str, draft: DraftStory) -> None:
+    """Add missing items without resetting checks or duplicating text."""
+    checklists = client.list_checklists(card_id)
+    groups = [
+        ("Acceptance Criteria", draft.acceptance_criteria),
+        ("Solution Tasks (proposed)", draft.solution_tasks),
+    ]
+    for name, items in groups:
+        if not items:
+            continue
+        checklist = next((item for item in checklists if item["name"] == name), None)
+        if checklist is None:
+            checklist = client.create_checklist(card_id, name)
+        existing_names = {item["name"] for item in checklist.get("checkItems", [])}
+        for item in items:
+            if item not in existing_names:
+                client.add_checklist_item(checklist["id"], item)
+                existing_names.add(item)
 
 
 def export_story(
@@ -163,6 +170,7 @@ def _export_story(
         if import_record.status == "completed":
             return ImportRead.model_validate(import_record)
 
+    _ensure_story_checklists(client, card_id, draft)
     _add_card_details(client, card_id, label_id, str(body.evidence_url))
 
     # Finish the database changes together: import, story, and analytics event.

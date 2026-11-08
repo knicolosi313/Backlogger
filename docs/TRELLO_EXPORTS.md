@@ -6,11 +6,12 @@ No schema migration is needed for this feature.
 
 ## Configuration and request
 
-Set `TRELLO_API_KEY` and `TRELLO_TOKEN` in the project-root `.env`. The token must
-belong to an account that can write to the target board. `TRELLO_API_SECRET` is
-not the token; it is reserved for a future OAuth integration. Restart the API
-after changing credentials. This uses one configured Trello account for the
-existing single-workspace MVP; per-user authorization is not implemented.
+Configure the application API key and encryption key, then use
+[Connect Trello](TRELLO_CONNECT.md) to authorize a browser-specific account that
+can write to the board. Exports use that browser's encrypted token, not a shared
+`TRELLO_TOKEN` in `.env`. Include cookies in frontend requests. The workspace's
+board/meeting/story data is still shared; account and tenant isolation are not
+implemented.
 
 Register the target board with its actual Trello board ID, process a meeting,
 and accept a story. Use the local database board UUID in this request path:
@@ -45,12 +46,21 @@ external card ID, status, and creation time. Inspect the request schema in `/doc
    same story; review routes block changes while an import is pending.
 5. Creates the card if appropriate, then immediately saves its ID. If adding a
    label or evidence link fails, the ID is retained for the next request.
-6. Adds the label and evidence link. Existing attachment URLs are checked so a
-   retry can recover an attachment whose response was lost.
+6. Creates native `Acceptance Criteria` and `Solution Tasks (proposed)`
+   checklists, then adds the label and evidence link. On retry, existing
+   checklists are matched by name and items by exact text. Existing checked
+   states are preserved; missing items are added unchecked. Existing attachment
+   URLs are checked so a retry can recover an attachment whose response was lost.
 7. Marks the import completed, marks the story imported, and records one
    `story_imported` analytics event together in a database transaction.
 
 ## Retries and errors
+
+Checklist creation applies to new exports and resumed pending exports. Completed
+exports return their saved result; this change does not retrofit cards that were
+already exported. Checklist state is held in Trello and is not synchronized back
+to the story JSON. Reading before adding avoids ordinary retry duplicates, but
+remote checklist/item requests still have no external exactly-once guarantee.
 
 Repeat the same request to reconcile an interrupted export. A completed export
 returns the original card ID without another Trello call or analytics event,

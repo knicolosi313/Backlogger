@@ -1,12 +1,13 @@
 """Request and response bodies for the API."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
 
 from services.worker.objects import DraftStory, StoryReview
+from services.worker.prompts.extract import CreativityLevel
 
 MeetingStatus = Literal["uploaded", "processing", "completed", "failed"]
 StoryStatus = Literal["draft", "needs_changes", "accepted", "imported", "rejected"]
@@ -37,6 +38,18 @@ class TrelloListRead(BaseModel):
     name: str
 
 
+class TrelloConnectionComplete(RequestBody):
+    state: str = Field(min_length=32, max_length=128)
+    token: SecretStr = Field(min_length=1, max_length=512)
+
+
+class TrelloConnectionRead(BaseModel):
+    connected: bool
+    member_id: str | None = None
+    username: str | None = None
+    expires_at: datetime | None = None
+
+
 class MeetingCreate(RequestBody):
     board_id: UUID
     title: str = Field(min_length=1, max_length=255)
@@ -46,6 +59,10 @@ class ProcessAccepted(BaseModel):
     meeting_id: UUID
     status: MeetingStatus
     status_url: str
+
+
+class ProcessOptions(RequestBody):
+    creativity: CreativityLevel | None = None
 
 
 class StoryEdit(RequestBody):
@@ -71,6 +88,66 @@ class ImportRead(BaseModel):
     external_card_id: str | None
     status: Literal["pending", "completed", "failed"]
     created_at: datetime
+
+
+class JiraConnectionComplete(RequestBody):
+    state: str = Field(min_length=32, max_length=128)
+    code: SecretStr = Field(min_length=1, max_length=4096)
+
+
+class JiraConnectionRead(BaseModel):
+    connected: bool
+    account_id: str | None = None
+    display_name: str | None = None
+    expires_at: datetime | None = None
+
+
+class JiraSiteRead(BaseModel):
+    id: str
+    name: str
+    url: str
+
+
+class JiraProjectRead(BaseModel):
+    id: str
+    key: str
+    name: str
+
+
+class JiraProjectPage(BaseModel):
+    values: list[JiraProjectRead]
+    startAt: int = 0
+    maxResults: int = 50
+    total: int | None = None
+    isLast: bool = False
+
+
+class JiraIssueTypeRead(BaseModel):
+    id: str
+    name: str
+    subtask: bool = False
+
+
+class JiraIssueTypePage(BaseModel):
+    issueTypes: list[JiraIssueTypeRead]
+    startAt: int = 0
+    maxResults: int = 50
+    total: int | None = None
+
+
+class JiraImportCreate(RequestBody):
+    story_id: UUID
+    issue_type_id: str = Field(pattern=r"^[0-9]+$")
+    evidence_url: HttpUrl
+    additional_fields: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("additional_fields")
+    @classmethod
+    def protect_export_fields(cls, fields):
+        protected = {"project", "issuetype", "summary", "description", "labels"}
+        if protected.intersection(fields):
+            raise ValueError("Additional fields cannot replace the export's core fields")
+        return fields
 
 
 class StoryRead(BaseModel):

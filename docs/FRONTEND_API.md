@@ -1,8 +1,13 @@
 # Frontend board selection and exports
 
-The frontend calls FastAPI. Trello credentials stay on the backend in `.env` as
-`TRELLO_API_KEY` and `TRELLO_TOKEN`. These endpoints use the single configured
-Trello account; they do not implement per-user OAuth or application authentication.
+For Jira Cloud sites, projects, issue types, and exports, see
+[JIRA_CLOUD.md](JIRA_CLOUD.md). The following walkthrough describes Trello.
+
+The frontend calls FastAPI. First use [Connect Trello](TRELLO_CONNECT.md) to
+authorize an account for this browser. The application API key stays in `.env`;
+each browser's token is stored encrypted in the database. Send browser cookies
+with `credentials: 'include'` on API calls. Application account authentication
+and workspace isolation are not implemented yet.
 
 ## Pick and register a board
 

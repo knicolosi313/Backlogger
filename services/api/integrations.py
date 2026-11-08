@@ -1,4 +1,4 @@
-"""Discover Trello destinations using the credentials stored on the backend."""
+"""Discover Trello destinations for the account connected in this browser."""
 
 from typing import Annotated
 
@@ -15,7 +15,7 @@ TrelloClientDep = Annotated[TrelloClient, Depends(get_trello_client)]
 
 @router.get("/boards", response_model=list[TrelloBoardRead])
 def list_trello_boards(client: TrelloClientDep):
-    """List open boards accessible to the configured Trello account."""
+    """List open boards accessible to this browser's connected Trello account."""
     boards = client.list_boards()
     return [board for board in boards if not board.get("closed", False)]
 

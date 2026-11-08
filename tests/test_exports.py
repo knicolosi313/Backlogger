@@ -12,9 +12,12 @@ from sqlmodel import Session, select
 
 from adapters.trello.client import TrelloClient
 from services.api import exports
+from services.api.export_clients import get_export_client
+from services.api import trello_auth
 from services.api.server import app
 from services.db import get_session
 from services.models import AnalyticsEvent, Board, Import, Meeting, Story
+from starlette.requests import Request
 
 
 @pytest.fixture
@@ -45,6 +48,8 @@ def export_case(database_connection, pipeline_results):
     trello.create_card.return_value = {"id": "card-1"}
     trello.format_story.side_effect = TrelloClient.format_story
     trello.list_attachments.return_value = []
+    trello.list_checklists.return_value = []
+    trello.create_checklist.side_effect = lambda card_id, name: {"id": name, "name": name, "checkItems": []}
 
     def session_dependency():
         with new_session() as session:
@@ -53,6 +58,7 @@ def export_case(database_connection, pipeline_results):
     previous_overrides = app.dependency_overrides.copy()
     app.dependency_overrides[get_session] = session_dependency
     app.dependency_overrides[exports.get_trello_client] = lambda: trello
+    app.dependency_overrides[get_export_client] = lambda: trello
     try:
         with TestClient(app) as api:
             yield SimpleNamespace(
@@ -212,11 +218,10 @@ def test_export_rejects_non_trello_board(export_case):
 
 
 def test_missing_trello_credentials_are_reported_without_network(monkeypatch):
-    monkeypatch.setattr(exports, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trello_auth, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("TRELLO_API_KEY", raising=False)
-    monkeypatch.delenv("TRELLO_TOKEN", raising=False)
     with pytest.raises(HTTPException) as error:
-        exports.get_trello_client()
+        exports.get_trello_client(Request({"type": "http", "headers": []}), Mock())
     assert error.value.status_code == 503
 
 
@@ -253,3 +258,38 @@ def test_import_history_is_scoped_to_board_and_includes_completed_export(export_
     assert case.api.get(f"/api/boards/{other_id}/imports").json() == []
     assert case.api.get(f"/api/boards/{uuid4()}/imports").status_code == 404
     assert case.api.get(f"/api/stories/{uuid4()}/import").status_code == 404
+
+
+def test_export_creates_separate_criteria_and_solution_checklists(export_case, pipeline_results):
+    case = export_case
+    assert case.api.post(case.url, json=case.body).status_code == 200
+    names = [call.args[1] for call in case.trello.create_checklist.call_args_list]
+    assert names == ["Acceptance Criteria", "Solution Tasks (proposed)"]
+    draft = pipeline_results[1].stories[0]
+    added = [(call.args[0], call.args[1]) for call in case.trello.add_checklist_item.call_args_list]
+    assert added == [
+        *[("Acceptance Criteria", criterion) for criterion in draft.acceptance_criteria],
+        *[("Solution Tasks (proposed)", task) for task in draft.solution_tasks],
+    ]
+
+
+def test_checklist_failure_keeps_card_id_and_retry_skips_existing_checks(export_case, pipeline_results):
+    case = export_case
+    draft = pipeline_results[1].stories[0]
+    case.trello.add_checklist_item.side_effect = [None, requests.Timeout("Synthetic timeout")]
+    assert case.api.post(case.url, json=case.body).status_code == 502
+    assert import_record(case).external_card_id == "card-1"
+    assert import_record(case).status == "pending"
+
+    # The timed-out addition succeeded in Trello, and the first item is checked.
+    case.trello.list_checklists.return_value = [{
+        "id": "existing-criteria", "name": "Acceptance Criteria", "checkItems": [
+            {"name": draft.acceptance_criteria[0], "state": "complete"},
+            {"name": draft.acceptance_criteria[1], "state": "incomplete"},
+        ],
+    }]
+    case.trello.add_checklist_item.side_effect = None
+    case.trello.add_checklist_item.reset_mock()
+    assert case.api.post(case.url, json=case.body).status_code == 200
+    case.trello.create_card.assert_called_once()
+    assert [call.args[1] for call in case.trello.add_checklist_item.call_args_list] == draft.solution_tasks

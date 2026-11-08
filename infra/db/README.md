@@ -15,6 +15,8 @@ The database name is `tsdb`; the application uses the `backlogger` schema inside
    ```powershell
    ./infra/db/setup.ps1 -Action Check
    ./infra/db/setup.ps1 -Action Apply
+   ./infra/db/setup.ps1 -Action Apply -Migration 002_trello_connections.sql
+   ./infra/db/setup.ps1 -Action Apply -Migration 003_jira_connections.sql
    ./infra/db/setup.ps1 -Action Check
    ```
 
@@ -24,6 +26,7 @@ The database name is `tsdb`; the application uses the `backlogger` schema inside
    ```powershell
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./infra/db/setup.ps1 -Action Check
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./infra/db/setup.ps1 -Action Apply
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./infra/db/setup.ps1 -Action Apply -Migration 002_trello_connections.sql
    ```
 
 The script requires `psql` on PATH (PostgreSQL 17 is installed on this computer).
@@ -32,6 +35,7 @@ It does not execute `.env` as code. `Check` is read-only; `Apply` creates the
 initial tables and TimescaleDB hypertable in one transaction and stops on errors.
 Rerunning `Apply` preserves existing data; it does not upgrade existing table definitions.
 Future changes should use new, numbered migrations.
+`-Migration` selects a specific migration; its default remains `001_initial.sql`.
 
 ## Initial storage
 
@@ -48,9 +52,13 @@ Future changes should use new, numbered migrations.
 The schema follows the current worker models. JSONB preserves their nested fields
 without a second set of Python data models. Media stays in local/object storage.
 No sample meetings, users, or credentials are inserted. This is a single-workspace
-MVP schema; authentication, tenant isolation, encrypted integration credentials,
-continuous aggregates, and external board imports are subsequent work. The API
-now materializes story drafts and supports manual edits and review decisions.
+MVP schema; account authentication, tenant isolation, and continuous aggregates
+are subsequent work. The API materializes story drafts, supports manual review,
+and exports accepted stories. Migration 002 adds `trello_connections` to store
+encrypted browser-specific Trello tokens and short-lived authorization state;
+see [Connect Trello](../../docs/TRELLO_CONNECT.md).
+Migration 003 adds encrypted Jira OAuth access/refresh tokens and browser-bound
+state; see [Jira Cloud](../../docs/JIRA_CLOUD.md).
 SQLModel updates `stories.updated_at` on ORM edits; direct SQL writers must update it.
 
 ## Python access with SQLModel

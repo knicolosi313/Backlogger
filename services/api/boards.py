@@ -4,17 +4,20 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, literal_column
 from sqlmodel import select
 
 from adapters.trello.client import TrelloClient
+from adapters.jira.client import JiraClient
 
 from services.models import AnalyticsEvent, Board, Import, Meeting, Story, StoryRevision
 
 from .dependencies import SessionDep, get_record
-from .exports import export_story, get_trello_client
-from .schemas import ImportCreate, ImportRead
+from .exports import export_story
+from .export_clients import get_export_client
+from .jira_exports import export_jira_story
+from .schemas import ImportCreate, ImportRead, JiraImportCreate
 from .schemas import BoardAnalytics, BoardCreate, DailyAnalytics, StoryRead, StoryStatus
 
 router = APIRouter(prefix="/api/boards", tags=["Boards"])
@@ -23,10 +26,16 @@ router = APIRouter(prefix="/api/boards", tags=["Boards"])
 @router.post("/{board_id}/imports", response_model=ImportRead)
 def import_story(
     board_id: UUID,
-    body: ImportCreate,
+    body: ImportCreate | JiraImportCreate,
     session: SessionDep,
-    client: Annotated[TrelloClient, Depends(get_trello_client)],
+    client: Annotated[TrelloClient | JiraClient, Depends(get_export_client)],
 ):
+    if isinstance(body, JiraImportCreate):
+        if not isinstance(client, JiraClient):
+            raise HTTPException(status_code=409, detail="Jira export fields require a Jira board")
+        return export_jira_story(session, client, board_id, body)
+    if not isinstance(client, TrelloClient):
+        raise HTTPException(status_code=409, detail="Trello export fields require a Trello board")
     return export_story(session, client, board_id, body)
 
 

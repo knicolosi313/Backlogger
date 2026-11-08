@@ -11,6 +11,7 @@ validated automatically (response.parsed gives you the model object).
 """
 
 import json
+import os
 import time
 from collections.abc import Callable
 from uuid import UUID, uuid4
@@ -23,18 +24,21 @@ from services.models import Meeting, PipelineOutput
 
 from .objects import CritiqueResult, ExtractionResult, Transcript
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
-from .prompts.extract import EXTRACT_SYSTEM_PROMPT
+from .prompts.extract import CreativityLevel, get_extract_prompt
 from .prompts.transcribe import TRANSCRIBE_SYSTEM_PROMPT
 
 def _run_pipeline(
     audio_path: str,
     model: str,
     save_stage: Callable[[str, BaseModel], None] | None = None,
+    *,
+    creativity: CreativityLevel = "balanced",
 ):
     """Run Gemini and optionally save each result before starting the next pass."""
     from google import genai
     from google.genai import types
 
+    extraction_prompt = get_extract_prompt(creativity)
     client = genai.Client()
 
     # Upload the audio and wait until Gemini has finished processing it
@@ -70,7 +74,7 @@ def _run_pipeline(
 
     # Pass 2: transcript -> stories
     extraction: ExtractionResult = generate_result(
-        EXTRACT_SYSTEM_PROMPT,
+        extraction_prompt,
         f"Meeting transcript:\n{transcript_json}",
         ExtractionResult,
     )
@@ -100,6 +104,7 @@ def run_pipeline(
     *,
     meeting_id: UUID | None = None,
     mark_completed: bool = True,
+    creativity: CreativityLevel | None = None,
 ):
     """Run Gemini; optionally checkpoint each stage for an existing meeting.
 
@@ -108,8 +113,11 @@ def run_pipeline(
     application operation. Without meeting_id, no database connection is opened.
     The API uses mark_completed=False until it has saved the reviewable stories.
     """
+    if creativity is None:
+        creativity = os.getenv("DEFAULT_CREATIVITY") or "balanced"
+    get_extract_prompt(creativity)  # Reject an invalid setting before any work is saved.
     if meeting_id is None:
-        return _run_pipeline(audio_path, model)
+        return _run_pipeline(audio_path, model, creativity=creativity)
 
     engine = get_engine()
     run_id = uuid4()
@@ -138,7 +146,7 @@ def run_pipeline(
 
     set_status("processing")
     try:
-        result = _run_pipeline(audio_path, model, save_stage)
+        result = _run_pipeline(audio_path, model, save_stage, creativity=creativity)
         if mark_completed:
             set_status("completed")
     except Exception:

@@ -23,7 +23,11 @@ def pipeline_results():
             "as_a": "member",
             "i_want": "to reset my password by email",
             "so_that": "I can access my account",
-            "acceptance_criteria": ["A member can request a reset email"],
+            "acceptance_criteria": [
+                "Given a member, when they request a reset, then the request is accepted",
+                "Given a reset request, when it is processed, then a reset email is sent",
+            ],
+            "solution_tasks": ["Add the password reset request flow", "Implement reset email delivery"],
             "priority": "high",
             "needs_clarification": False,
             "source": {
