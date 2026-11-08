@@ -378,7 +378,7 @@ export async function decideStory(cfg: ApiConfig, storyId: string, decision: Sto
   return toStory(story);
 }
 
-// ---- importing to Trello ----
+// ---- importing to Trello or Jira ----
 
 // The values for the project's required fields, built from what was saved in Settings. The
 // field list is fetched fresh so a change on the Jira side is noticed before any story is sent.
@@ -435,9 +435,8 @@ export async function importStories(settings: Settings, stories: Story[]): Promi
     };
   };
 
-  // Trello stories go a few at a time, which is much faster than one after another. The backend
-  // keeps their combined Trello requests under Trello's rate limit. Jira stays one at a time.
-  const batchSize = isJira ? 1 : TRELLO_IMPORT_BATCH;
+  // Both providers export a few stories at a time, while preserving per-story retries.
+  const batchSize = EXPORT_BATCH_SIZE;
   const results: ImportResult[] = [];
   let firstError = '';
   let failed = 0;
@@ -456,7 +455,7 @@ export async function importStories(settings: Settings, stories: Story[]): Promi
   return results;
 }
 
-const TRELLO_IMPORT_BATCH = 3;
+const EXPORT_BATCH_SIZE = 3;
 
 // ---- analytics ----
 

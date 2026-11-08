@@ -73,6 +73,18 @@ def test_uncertain_or_invalid_stories_are_left_for_review(eligible, problem):
 @pytest.fixture(params=["trello", "jira"])
 def auto_case(request, database_connection, pipeline_results, monkeypatch, tmp_path):
     provider = request.param
+    # A transactional fixture shares one connection, so exports and progress writes
+    # must run inline. A separate test verifies real concurrent Jira scheduling.
+    class InlineExecutor:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def map(self, function, items):
+            return map(function, items)
+    monkeypatch.setattr(auto_import, "ThreadPoolExecutor", InlineExecutor)
     def session_factory(*args):
         return Session(bind=database_connection, join_transaction_mode="create_savepoint")
     def dependency():

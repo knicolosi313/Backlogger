@@ -108,7 +108,10 @@ def finish_connection(request: Request, session: Session, state: str, code: str)
 
 
 def get_jira_client(request: Request, session: SessionDep) -> JiraClient:
-    return client_for_connection(browser_connection(request, session, lock=True), session)
+    client = client_for_connection(browser_connection(request, session, lock=True), session)
+    # Serialize token refresh, not the subsequent project's entire export.
+    session.commit()
+    return client
 
 
 def client_for_connection(record: JiraConnection | None, session: Session) -> JiraClient:

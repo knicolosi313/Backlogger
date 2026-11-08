@@ -1,5 +1,9 @@
 """Jira Cloud REST calls using a browser account's OAuth access token."""
 
+import hashlib
+import math
+import threading
+import time
 from urllib.parse import quote
 from uuid import UUID
 
@@ -9,16 +13,50 @@ from services.worker.objects import DraftStory
 from services.worker.timecode import format_clock
 
 
+# Separate export clients share rate-limit feedback within this backend process.
+# Store a digest rather than keeping another copy of an access token.
+_cooldowns: dict[str, float] = {}
+_cooldown_lock = threading.Lock()
+
+
+def _wait_for_cooldown(account_key: str) -> None:
+    while True:
+        with _cooldown_lock:
+            delay = _cooldowns.get(account_key, 0) - time.monotonic()
+            if delay <= 0:
+                _cooldowns.pop(account_key, None)
+                return
+        time.sleep(delay)
+
+
+def _remember_cooldown(account_key: str, retry_after) -> None:
+    try:
+        delay = float(retry_after)
+        if not math.isfinite(delay) or delay < 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        delay = 1.0
+    with _cooldown_lock:
+        _cooldowns[account_key] = max(_cooldowns.get(account_key, 0), time.monotonic() + delay)
+
+
 class JiraClient:
     def __init__(self, access_token: str):
         self.access_token = access_token
+        # Each export owns its client; reuse HTTP connections within that thread.
+        self._session = requests.Session()
+        self._account_key = hashlib.sha256(access_token.encode()).hexdigest()
 
     def _request(self, method: str, path: str, *, params=None, body=None):
-        response = requests.request(
+        _wait_for_cooldown(self._account_key)
+        response = self._session.request(
             method, f"https://api.atlassian.com/{path}",
             headers={"Authorization": f"Bearer {self.access_token}", "Accept": "application/json"},
             params=params, json=body, timeout=10,
         )
+        if response.status_code == 429:
+            _remember_cooldown(self._account_key, response.headers.get("Retry-After"))
+        # Never automatically replay issue creation after a timeout or rate limit.
         response.raise_for_status()
         return response.json() if response.content else None
 

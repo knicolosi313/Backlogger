@@ -1,5 +1,20 @@
 # Jira Cloud connection and exports
 
+Manual bulk exports and automatic imports process up to three stories at a time.
+Each automatic export owns its database session and Jira client; each client
+reuses its HTTP connections. The connection-row lock protects credential refresh
+and is released before story export, so stories using the same account can
+overlap. Required fields are still checked before issue creation, and existing
+import markers and saved issue keys continue to prevent blind duplicate creation.
+
+Within one backend process, Jira clients using the same access token share a
+cooldown after a 429 response, honoring its `Retry-After` delay before subsequent
+requests. Requests already in flight may still finish. The failed request is not
+automatically replayed, especially for issue creation. Check export status and
+retry through Backlogger's existing reconciliation flow. Rate-limit feedback is
+not coordinated between separate backend processes; Jira can still throttle
+requests. See [Atlassian's rate-limit guidance](https://developer.atlassian.com/cloud/jira/platform/rate-limiting/).
+
 Jira Cloud is supported alongside Trello. A browser connects its own Atlassian
 account, selects a site and project, and exports accepted stories as Jira issues.
 The workspace's local board/meeting/story data is still shared: this feature does

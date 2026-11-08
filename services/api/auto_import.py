@@ -23,9 +23,9 @@ from .schemas import AutoImportOptions, AutoImportStatus, ImportCreate, JiraImpo
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meetings", tags=["Auto-import"])
 
-# Trello stories export side by side. TrelloClient keeps their combined requests under Trello's limit.
-# Jira stays one at a time because they share one account whose token may need refreshing.
+# Each story has its own database session and provider client.
 TRELLO_EXPORT_WORKERS = 3
+JIRA_EXPORT_WORKERS = 3
 
 
 def eligible_story(story: Story, threshold: float, *, retry=False) -> bool:
@@ -165,7 +165,10 @@ def run_auto_import(meeting_id: UUID):
                         if account_identity(account, provider) != identity:
                             raise HTTPException(401, "Reconnect the original account")
                         client = jira_auth.client_for_connection(account, session)
-                    # Jira refresh commits. Reacquire the story lock and recheck
+                        # Release the account lock once credentials are ready; issue creation
+                        # must not hold up the other stories using this account.
+                        session.commit()
+                    # Resolving Jira credentials commits. Reacquire the story lock and recheck
                     # so human edits/rejections during refresh cannot be overwritten.
                     session.refresh(story, with_for_update=True)
                     if story.status == "imported":
@@ -194,7 +197,7 @@ def run_auto_import(meeting_id: UUID):
                 return "failed"
 
         # Results come back in story order, and only this thread updates the counts and progress.
-        workers = TRELLO_EXPORT_WORKERS if provider == "trello" else 1
+        workers = TRELLO_EXPORT_WORKERS if provider == "trello" else JIRA_EXPORT_WORKERS
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for outcome in pool.map(export_one, story_ids):
                 if outcome == "imported":

@@ -1,0 +1,13 @@
+/* Store presentation surrounds the actual rendered extension; its UI stays unchanged. */
+html { color-scheme: dark; }
+body { width: 1280px; height: 800px; min-height: 800px; overflow: hidden; }
+.capture-layout { display: grid; grid-template-columns: 530px 650px; gap: 24px; padding: 36px 38px; width: 1280px; height: 800px; background: radial-gradient(ellipse at 10% 90%, #34206b 0, transparent 55%), #0e0c1b; }
+.capture-copy { padding: 28px 24px 20px 8px; display: flex; flex-direction: column; align-items: flex-start; }
+.capture-brand { display: flex; align-items: center; gap: 14px; font-size: 29px; font-weight: 700; letter-spacing: -1px; }
+.capture-brand svg { color: #c4b5fd; }
+.capture-eyebrow { font-size: 12px; font-weight: 700; color: #b5a6eb; letter-spacing: 2px; margin-top: 110px; }
+.capture-copy h1 { font-size: 49px; line-height: 1.12; letter-spacing: -1.7px; margin-top: 25px; max-width: 470px; }
+.capture-copy p { font-size: 19px; line-height: 1.65; color: #bdb6d8; margin-top: 28px; max-width: 425px; }
+.capture-footer { margin-top: auto; font-size: 12px; color: #a69bc2; }
+.capture-extension { height: 728px; overflow-y: auto; border: 1px solid #494068; border-radius: 18px; background: #0e0c1b; box-shadow: 0 20px 70px #05030f99; scrollbar-width: none; }
+.capture-extension::-webkit-scrollbar { display: none; }

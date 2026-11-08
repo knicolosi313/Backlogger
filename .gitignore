@@ -439,3 +439,6 @@ media/*
 !media/README.md
 *.webm
 *.wav
+
+# Isolated Chrome profiles and build output used for store captures
+/tmp/store-screenshots/

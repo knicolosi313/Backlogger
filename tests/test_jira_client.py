@@ -5,17 +5,59 @@ from uuid import uuid4
 
 import pytest
 import requests
+from adapters.jira import client as jira_module
 
 from adapters.jira.client import JiraClient
 
 
 @pytest.fixture
 def jira_http(monkeypatch):
+    jira_module._cooldowns.clear()
     response = Mock(content=b"{}")
     response.json.return_value = {}
     request = Mock(return_value=response)
-    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(requests.Session, "request", request)
     return JiraClient("synthetic-access"), request, response
+
+
+def test_requests_reuse_one_http_session(jira_http):
+    client, request, _ = jira_http
+    session = client._session
+    client.get_current_member()
+    client.get_current_member()
+    assert client._session is session
+    assert request.call_count == 2
+
+
+def test_rate_limit_pauses_other_clients_without_replaying_creation(jira_http, monkeypatch):
+    client, request, response = jira_http
+    clock = [100.0]
+    sleeps = []
+    monkeypatch.setattr(jira_module.time, "monotonic", lambda: clock[0])
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+    monkeypatch.setattr(jira_module.time, "sleep", sleep)
+    response.status_code = 429
+    response.headers = {"Retry-After": "4"}
+    response.raise_for_status.side_effect = requests.HTTPError(response=response)
+    with pytest.raises(requests.HTTPError):
+        client.create_issue(str(uuid4()), {})
+    assert request.call_count == 1
+    response.status_code = 200
+    response.raise_for_status.side_effect = None
+    JiraClient("synthetic-access").get_current_member()
+    assert sleeps == [4.0]
+    assert request.call_count == 2
+    assert "synthetic-access" not in jira_module._cooldowns
+
+
+@pytest.mark.parametrize("header", [None, "invalid", "nan", "inf", "-5"])
+def test_invalid_retry_after_uses_short_fallback(header, monkeypatch):
+    jira_module._cooldowns.clear()
+    monkeypatch.setattr(jira_module.time, "monotonic", lambda: 10.0)
+    jira_module._remember_cooldown("account", header)
+    assert jira_module._cooldowns["account"] == 11.0
 
 
 def test_projects_use_bearer_token_and_atlassian_gateway(jira_http):
