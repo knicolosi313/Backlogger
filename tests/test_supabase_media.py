@@ -119,6 +119,35 @@ def test_local_recordings_remain_readable_after_switching_storage(supabase, tmp_
     assert not supabase[1]
 
 
+def test_playback_endpoint_closes_private_download_and_preserves_original(supabase, monkeypatch, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+    key = media.save_audio(uuid4(), upload())
+    recording = SimpleNamespace(media_key=key)
+    monkeypatch.setattr(meetings, "get_record", lambda *args: recording)
+    from services.db import get_session
+    app = FastAPI()
+    app.include_router(meetings.router)
+    app.dependency_overrides[get_session] = lambda: None
+    original_download = SupabaseStorage.download
+    responses = []
+
+    def download(client, object_key):
+        response = original_download(client, object_key)
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(SupabaseStorage, "download", download)
+    with TestClient(app) as client:
+        response = client.get(f"/api/meetings/{uuid4()}/audio")
+    assert response.status_code == 200
+    assert response.content == b"synthetic audio"
+    assert responses[0].closed
+    assert len(supabase[0]) == 1
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize("key", [
     "supabase://meeting-audio/../secret", "supabase://other/path?token=secret",
     "supabase://meeting-audio/https://example.test/audio.webm",

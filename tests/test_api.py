@@ -153,6 +153,21 @@ def test_complete_upload_process_edit_and_review_workflow(
     assert api.get(f"/api/boards/{board_id}/stories", params={"status": "accepted"}).json() == []
 
 
+def test_meeting_audio_is_available_inside_the_extension(api):
+    board = create_board(api)
+    meeting = create_meeting(api, board["id"])
+    url = f"/api/meetings/{meeting['id']}"
+    assert api.get(f"{url}/audio").status_code == 404
+    assert api.get(f"/api/meetings/{uuid4()}/audio").status_code == 404
+    data = b"synthetic audio for evidence playback"
+    assert api.post(f"{url}/media", files={"file": ("audio.webm", data, "audio/webm")}).status_code == 200
+    response = api.get(f"{url}/audio")
+    assert response.status_code == 200
+    assert response.content == data
+    assert response.headers["content-type"] == "audio/webm"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
 def test_supabase_upload_replacement_and_processing(api, monkeypatch, pipeline_results, tmp_path):
     from unittest.mock import Mock
     import requests
@@ -195,6 +210,11 @@ def test_supabase_upload_replacement_and_processing(api, monkeypatch, pipeline_r
         assert response.json()["media_key"].startswith("supabase://meeting-audio/")
     assert len(objects) == 1
     assert storage.delete.call_count == 1
+    playback = api.get(f"{url}/audio")
+    assert playback.status_code == 200
+    assert playback.content == b"replacement audio"
+    assert playback.headers["content-type"] == "audio/webm"
+    assert "supabase" not in playback.headers.get("location", "")
     assert api.post(f"{url}/process").status_code == 202
     assert api.get(url).json()["status"] == "completed"
     assert observed_paths and not observed_paths[0].exists()

@@ -69,5 +69,26 @@ For larger recordings, Supabase recommends [resumable uploads](https://supabase.
 
 Database writes and object storage do not share a transaction. Cleanup is best
 effort; a network interruption or process crash can leave an unreferenced object.
-Automatic retention, media playback endpoints, and moving old local files are
-not part of this change. Workspace data remains shared as in the existing app.
+Automatic retention and moving old local files are not implemented. Workspace
+data remains shared as in the existing app.
+
+## Playback in the extension
+
+Click **Jump to moment** under a story's evidence to open the meeting audio
+player inside the extension. It seeks to that evidence timestamp and attempts
+playback. If Chrome blocks autoplay, use the player's Play control. Repeated
+jumps reuse the loaded recording. Leaving the story stops playback, cancels
+pending downloads, and releases the browser's temporary audio URL.
+
+`GET /api/meetings/{meeting_id}/audio` streams local or private Supabase audio
+through the backend with `Cache-Control: private, no-store`. Missing meetings or
+recordings return 404. Storage credentials and public bucket URLs are never sent
+to the extension. The extension fetches the complete recording on the first jump
+before playing it from a temporary browser Blob URL; this supports seeking
+without forwarding HTTP range requests to Supabase. Long recordings may take
+time to load and use memory up to the recording's size. Playback continues past
+the evidence segment, with normal pause and seek controls.
+
+This endpoint follows the current shared-workspace API: it does not add login
+or per-user authorization. A private bucket protects direct Supabase access;
+the backend audio endpoint itself is not user-isolated.

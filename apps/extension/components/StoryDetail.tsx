@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { decideStory, momentUrl, requestEdits, updateStory } from '@/lib/api';
+import { decideStory, requestEdits, updateStory } from '@/lib/api';
 import { formatClock } from '@/lib/format';
 import { INVEST_LABELS } from '@/lib/options';
 import { boardProvider } from '@/lib/provider';
 import type { Evidence, InvestCheck, Settings, Story, StoryDecision, StoryEdit } from '@/lib/types';
 import { ConfidenceBadge, QualityBadge, StatusBadge } from './Badges';
 import { StoryEditForm } from './StoryEditForm';
+import { MeetingAudio } from './MeetingAudio';
 
 interface Props {
   story: Story;
@@ -64,7 +65,7 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
       {mode === 'edit' ? (
         <StoryEditForm story={story} busy={busy} onSave={saveEdit} onCancel={() => setMode('view')} />
       ) : (
-        <StoryBody story={story} settings={settings} />
+        <StoryBody key={story.id} story={story} settings={settings} />
       )}
 
       {story.reviewerNote && story.status === 'needs_changes' && (
@@ -138,6 +139,7 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
 }
 
 function StoryBody({ story, settings }: { story: Story; settings: Settings }) {
+  const [moment, setMoment] = useState<{ seconds: number; click: number } | null>(null);
   return (
     <>
       <p>
@@ -167,8 +169,11 @@ function StoryBody({ story, settings }: { story: Story; settings: Settings }) {
           </p>
         )}
         {story.evidence.map((item) => (
-          <EvidenceItem key={item.startSeconds} evidence={item} story={story} settings={settings} />
+          <EvidenceItem key={item.startSeconds} evidence={item} onJump={() => setMoment((previous) => ({
+            seconds: item.startSeconds, click: (previous?.click ?? 0) + 1,
+          }))} />
         ))}
+        {moment && <MeetingAudio key={`${settings.apiUrl}:${story.meetingId}`} settings={settings} meetingId={story.meetingId} moment={moment} />}
       </section>
 
       <section className="stack">
@@ -210,18 +215,15 @@ function StoryBody({ story, settings }: { story: Story; settings: Settings }) {
   );
 }
 
-function EvidenceItem({ evidence, story, settings }: { evidence: Evidence; story: Story; settings: Settings }) {
-  // TODO: the web app's meeting page needs to read ?t= and seek to it
-  const url = momentUrl(settings.webAppUrl, story.meetingId, evidence.startSeconds);
-
+function EvidenceItem({ evidence, onJump }: { evidence: Evidence; onJump: () => void }) {
   return (
     <blockquote className="evidence">
       <p>“{evidence.quote}”</p>
       <footer>
         {evidence.speaker} ·{' '}
-        <a href={url} target="_blank" rel="noreferrer">
+        <button className="link" onClick={onJump}>
           Jump to moment ({formatClock(evidence.startSeconds)})
-        </a>
+        </button>
       </footer>
     </blockquote>
   );

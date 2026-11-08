@@ -4,6 +4,13 @@ Audio uploads also support a private Supabase bucket configured on the backend.
 The frontend upload/process endpoints stay the same; treat `media_key` as opaque.
 See [Supabase storage](SUPABASE_STORAGE.md) for configuration and processing.
 
+The extension plays meeting evidence directly in its side panel using
+`GET /api/meetings/{meeting_id}/audio`. The response is audio bytes, not JSON.
+Use the usual backend credentials when fetching it, then a browser Blob URL for
+the audio controls and timestamp seeking. No web dashboard is needed for this
+action. The endpoint has the same shared-workspace access model as other meeting
+routes; it does not provide user isolation.
+
 Before processing audio, refresh the meeting's existing external work with
 `POST /api/boards/{board_id}/context/sync` using the connected account cookie.
 The extension already does this. See [board context](BOARD_CONTEXT.md) for epic

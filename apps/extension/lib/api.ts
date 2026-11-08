@@ -129,6 +129,12 @@ export async function startProcessing(cfg: ApiConfig, meetingId: string, creativ
   });
 }
 
+export function getMeetingAudio(cfg: ApiConfig, meetingId: string, signal?: AbortSignal): Promise<Blob> {
+  return request<Blob>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/audio`, {
+    responseType: 'blob', signal,
+  });
+}
+
 export async function getProcessingStatus(cfg: ApiConfig, meetingId: string): Promise<ProcessingStatus> {
   const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
   return meetingStatus(meeting);

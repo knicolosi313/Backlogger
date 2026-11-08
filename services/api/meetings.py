@@ -2,9 +2,11 @@
 
 import logging
 import os
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
 from services.models import Board, Meeting, PipelineOutput
@@ -13,7 +15,7 @@ from services.worker.prompts.extract import get_extract_prompt
 
 from .dependencies import SessionDep, get_record
 from .jobs import process_meeting
-from .media import delete_media, media_exists, save_audio
+from .media import CONTENT_TYPES, delete_media, media_exists, processing_audio, save_audio
 from .schemas import MeetingCreate, MeetingStatus, ProcessAccepted, ProcessOptions
 
 router = APIRouter(prefix="/api/meetings", tags=["Meetings"])
@@ -111,6 +113,28 @@ def start_processing(
     )
     return ProcessAccepted(
         meeting_id=meeting_id, status="processing", status_url=f"/api/meetings/{meeting_id}",
+    )
+
+
+@router.get("/{meeting_id}/audio", response_class=StreamingResponse)
+def get_meeting_audio(meeting_id: UUID, session: SessionDep):
+    """Serve audio through the backend without exposing storage credentials."""
+    meeting = get_record(session, Meeting, meeting_id)
+    key = meeting.media_key
+    if not key or not media_exists(key):
+        raise HTTPException(404, "Meeting audio is unavailable")
+    content_types = {suffix: content_type for content_type, suffix in CONTENT_TYPES.items()}
+    content_types.update({".wav": "audio/wav", ".mp3": "audio/mpeg", ".flac": "audio/flac"})
+
+    def chunks():
+        # Keep the temporary remote download alive until the response finishes.
+        with processing_audio(key) as path, path.open("rb") as audio:
+            while chunk := audio.read(1024 * 1024):
+                yield chunk
+
+    return StreamingResponse(
+        chunks(), media_type=content_types.get(Path(key).suffix.lower(), "application/octet-stream"),
+        headers={"Cache-Control": "private, no-store"},
     )
 
 

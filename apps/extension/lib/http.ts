@@ -41,9 +41,9 @@ function describeError(body: unknown, status: number): string {
 export async function request<T>(
   cfg: ApiConfig,
   path: string,
-  init: { method?: string; json?: unknown; form?: FormData } = {},
+  init: { method?: string; json?: unknown; form?: FormData; signal?: AbortSignal; responseType?: 'json' | 'blob' } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: init.responseType === 'blob' ? 'audio/*' : 'application/json' };
   if (cfg.apiToken) headers.Authorization = `Bearer ${cfg.apiToken}`;
 
   let body: BodyInit | undefined;
@@ -58,11 +58,13 @@ export async function request<T>(
   try {
     // credentials: 'include' sends the cookie that says which Trello account this browser connected
     const url = `${cfg.apiUrl.replace(/\/+$/, '')}${path}`;
-    response = await fetch(url, { method: init.method ?? 'GET', headers, body, credentials: 'include' });
-  } catch {
+    response = await fetch(url, { method: init.method ?? 'GET', headers, body, credentials: 'include', signal: init.signal });
+  } catch (error) {
+    if (init.signal?.aborted) throw error;
     throw new ApiError(`Could not reach the server at ${cfg.apiUrl}. Is the API running?`, 0);
   }
 
+  if (response.ok && init.responseType === 'blob') return await response.blob() as T;
   const text = await response.text();
   let parsed: unknown;
   if (text) {

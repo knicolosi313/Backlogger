@@ -68,10 +68,21 @@ def trello_callback():
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({state, token})
         });
-        if (!response.ok) throw new Error('Connection failed');
+        if (!response.ok) {
+            const failures = {
+                400: 'The connection session is missing, expired, or replaced by another attempt. Close this tab, confirm the extension API URL matches the origin of this page, and start Connect Trello again.',
+                422: 'Trello returned an invalid connection response. Start Connect Trello again.',
+                502: 'The backend could not validate your account with Trello. Check the backend API key and Trello connectivity.',
+                503: 'The backend configuration or database is unavailable. Check the backend logs and environment settings.',
+                504: 'Trello did not respond in time. Start Connect Trello again.'
+            };
+            message.textContent = `Could not connect Trello (HTTP ${response.status}). ` +
+                (failures[response.status] || 'Check the backend logs, then start Connect Trello again.');
+            return;
+        }
         message.textContent = 'Trello connected. You can close this page and return to Backlogger.';
     } catch {
-        message.textContent = 'Could not connect Trello. Return to Backlogger and start again.';
+        message.textContent = 'Could not reach the backend to finish connecting Trello. Check that the local backend is running, then start Connect Trello again.';
     }
 })();
 </script>
