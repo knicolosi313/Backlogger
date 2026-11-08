@@ -9,6 +9,10 @@ A Chrome extension records a browser meeting beside a Trello board. Gemini turns
 Full design: [docs/DESIGN.md](docs/DESIGN.md)
 AI usage disclosure (hackathon requirement): [docs/AI_USAGE.md](docs/AI_USAGE.md)
 
+Policy drafts: [Privacy Policy](docs/legal/PRIVACY_POLICY.md) and
+[Terms of Service](docs/legal/TERMS_OF_SERVICE.md).
+See [publishing and operator review](docs/legal/README.md) before sharing them.
+
 Database setup: [infra/db/README.md](infra/db/README.md)
 
 ## Mockups
