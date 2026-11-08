@@ -129,6 +129,29 @@ the Jira issue key, for example `DEMO-20`. Completion marks the story imported
 and records a `story_imported` analytics event. Existing import-history and
 story-import-status routes work for both providers.
 
+## Using Jira from the browser extension
+
+The extension's Settings tab has a Jira card next to Trello. Connect opens
+`/api/integrations/jira/connect` in a tab, then the panel lets you pick a site, a
+project, and the issue type stories are created as (it defaults to Story, then
+Task; sub-tasks are not offered). Choosing a project registers it with
+`POST /api/boards` using `provider: "jira"`.
+
+Only one connection is used at a time: each Connect button is disabled while the
+other provider is connected, and disconnecting clears that provider's saved
+board/project and destination. This is enforced in the extension only. The backend
+keeps separate Trello and Jira sessions and will accept both.
+
+If the project requires fields beyond the ones the export fills in itself (a custom
+field, the reporter), Settings shows a "Required by this project" form built from the
+creation-field metadata. Values are saved per project and issue type and sent as
+`additional_fields` on every import; the field list is re-fetched at import time, and
+the import is stopped with a message if a required field is still empty. Supported
+types are text, multi-line text (sent as a document), number, date, date-time,
+single and multiple choice, user, and labels. A user field left empty means the
+connected account (this is what covers a required reporter). Any other type is entered
+as the raw JSON value Jira expects.
+
 ## Retry behavior and limitations
 
 Each story has one local import record. Creation intent is committed before the

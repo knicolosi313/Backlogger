@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { decideStory, momentUrl, requestEdits, updateStory } from '@/lib/api';
 import { formatClock } from '@/lib/format';
 import { INVEST_LABELS } from '@/lib/options';
+import { boardProvider } from '@/lib/provider';
 import type { Evidence, InvestCheck, Settings, Story, StoryDecision, StoryEdit } from '@/lib/types';
 import { ConfidenceBadge, QualityBadge, StatusBadge } from './Badges';
 import { StoryEditForm } from './StoryEditForm';
@@ -100,7 +101,7 @@ export function StoryDetail({ story, settings, onChange, onBack }: Props) {
         <div className="actions">
           {isFinished && story.cardUrl && (
             <a className="button" href={story.cardUrl} target="_blank" rel="noreferrer">
-              Open Trello card
+              {boardProvider(settings.selectedBoard) === 'jira' ? 'Open Jira issue' : 'Open Trello card'}
             </a>
           )}
 

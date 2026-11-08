@@ -1,24 +1,41 @@
 import { useState } from 'react';
 import { registerBoard } from '@/lib/api';
+import { openConnectTab } from '@/lib/connectTab';
 import { disconnectTrello, trelloConnectUrl } from '@/lib/trello';
-import { formatDateTime, formatPercent } from '@/lib/format';
+import { formatDateTime, formatPercent, isLocalhost } from '@/lib/format';
 import { CREATIVITY_OPTIONS, MODEL_OPTIONS } from '@/lib/options';
-import { DEFAULT_SETTINGS, settingsItem } from '@/lib/storage';
+import { boardProvider } from '@/lib/provider';
+import { DEFAULT_SETTINGS, forgetProvider, settingsItem } from '@/lib/storage';
 import type { Creativity, Settings, TrelloBoard, TrelloConnection, TrelloList } from '@/lib/types';
 import type { Loaded } from '@/lib/useLoad';
+import { JiraConnect, JiraPicker, type JiraState } from './JiraSettings';
 
 interface Props {
   settings: Settings;
   connection: Loaded<TrelloConnection | undefined>;
   boards: Loaded<TrelloBoard[]>;
   lists: { items?: TrelloList[]; error?: string; loading: boolean };
+  jira: JiraState;
 }
 
-export function SettingsTab({ settings, connection, boards, lists }: Props) {
+export function SettingsTab({ settings, connection, boards, lists, jira }: Props) {
+  const trelloConnected = connection.data?.connected === true;
+  const jiraConnected = jira.connection.data?.connected === true;
+
   return (
     <div className="stack">
-      <TrelloConnect settings={settings} connection={connection} />
-      {connection.data?.connected && <TrelloPicker settings={settings} boards={boards} lists={lists} />}
+      {trelloConnected && jiraConnected && (
+        <p className="note warn" role="alert">
+          Trello and Jira are both connected, but only one connection works at a time. Disconnect one of them.
+        </p>
+      )}
+
+      <TrelloConnect settings={settings} connection={connection} blocked={jiraConnected} />
+      <JiraConnect settings={settings} connection={jira.connection} blocked={trelloConnected} />
+
+      {trelloConnected && !jiraConnected && <TrelloPicker settings={settings} boards={boards} lists={lists} />}
+      {jiraConnected && !trelloConnected && <JiraPicker settings={settings} jira={jira} />}
+
       <SettingsForm settings={settings} />
     </div>
   );
@@ -30,7 +47,17 @@ async function updateSettings(change: Partial<Settings>) {
   await settingsItem.setValue({ ...latest, ...change });
 }
 
-function TrelloConnect({ settings, connection }: { settings: Settings; connection: Loaded<TrelloConnection | undefined> }) {
+// `blocked` is set while Jira is connected. Only one connection works at a time, so Trello
+// can't be connected until Jira is disconnected.
+function TrelloConnect({
+  settings,
+  connection,
+  blocked,
+}: {
+  settings: Settings;
+  connection: Loaded<TrelloConnection | undefined>;
+  blocked: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const status = connection.data;
@@ -40,6 +67,8 @@ function TrelloConnect({ settings, connection }: { settings: Settings; connectio
     setError('');
     try {
       await disconnectTrello(settings);
+      // the board and list belong to this account
+      await forgetProvider('trello');
       connection.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not disconnect.');
@@ -71,12 +100,20 @@ function TrelloConnect({ settings, connection }: { settings: Settings; connectio
         <>
           <p className="hint">Connect your Trello account to pick a board and import stories.</p>
           <div className="row">
-            <button className="primary" onClick={() => browser.tabs.create({ url: trelloConnectUrl(settings) })}>
+            <button
+              className="primary"
+              disabled={blocked}
+              onClick={() => void openConnectTab('trello', trelloConnectUrl(settings))}
+            >
               Connect Trello
             </button>
           </div>
-          <p className="hint">Approve access in the tab that opens. This panel updates when you're done.</p>
-          {hostOf(settings.apiUrl) === 'localhost' && (
+          {blocked ? (
+            <p className="hint">Only one connection works at a time. Disconnect Jira first.</p>
+          ) : (
+            <p className="hint">Approve access in the tab that opens. It closes by itself once you're connected.</p>
+          )}
+          {isLocalhost(settings.apiUrl) && (
             <p className="note warn">
               The API address uses localhost, but the backend's Trello callback uses 127.0.0.1 unless you changed
               it. They need the same host or the connection won't save. Change it under Server connection below.
@@ -92,7 +129,7 @@ function TrelloConnect({ settings, connection }: { settings: Settings; connectio
 }
 
 // Board and list apply right away, there's no Save button for this part.
-function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection'>) {
+function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection' | 'jira'>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const selected = settings.selectedBoard;
@@ -111,7 +148,11 @@ function TrelloPicker({ settings, boards, lists }: Omit<Props, 'connection'>) {
     setBusy(true);
     try {
       // the backend has to know about the board before meetings can belong to it
-      const registered = await registerBoard(settings, trelloBoard);
+      const registered = await registerBoard(settings, {
+        provider: 'trello',
+        externalId: trelloBoard.id,
+        name: trelloBoard.name,
+      });
       // the old list belonged to the old board, App picks a new default
       await updateSettings({
         selectedBoard: registered,
@@ -216,7 +257,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
       apiToken: draft.apiToken,
       webAppUrl: draft.webAppUrl,
       ...(serverChanged
-        ? { selectedBoard: undefined, targetList: DEFAULT_SETTINGS.targetList, targetListId: undefined }
+        ? {
+            selectedBoard: undefined,
+            targetList: DEFAULT_SETTINGS.targetList,
+            targetListId: undefined,
+            jiraIssueType: undefined,
+            jiraFieldValues: undefined,
+          }
         : {}),
     });
     setSaved(true);
@@ -263,8 +310,10 @@ function SettingsForm({ settings }: { settings: Settings }) {
           />
         </label>
         <p className="hint">
-          Imports go to "{settings.targetList}". Change the list in the Trello section above. Turn auto-import on from
-          the Record tab. It stays off until you do.
+          {boardProvider(settings.selectedBoard) === 'jira'
+            ? `Imports are created in ${settings.selectedBoard?.name ?? 'your Jira project'} as ${settings.jiraIssueType?.name ?? 'an issue type you pick'}. Change that in the Jira section above.`
+            : `Imports go to "${settings.targetList}". Change the list in the Trello section above.`}{' '}
+          Turn auto-import on from the Record tab. It stays off until you do.
         </p>
       </section>
 
@@ -301,14 +350,6 @@ function SettingsForm({ settings }: { settings: Settings }) {
       </button>
     </form>
   );
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return '';
-  }
 }
 
 function normalizeUrl(url: string): string {

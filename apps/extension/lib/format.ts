@@ -22,6 +22,15 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// The backend's OAuth callbacks use 127.0.0.1, so a localhost API address loses the session cookie
+export function isLocalhost(url: string): boolean {
+  try {
+    return new URL(url).hostname === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
 // -> "Nov 6, 3:00 PM"
 export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

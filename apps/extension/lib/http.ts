@@ -16,10 +16,18 @@ export class ApiError extends Error {
 }
 
 // FastAPI's `detail` is a string for errors we raise (404, 409...) and a list of
-// { loc, msg } objects for validation errors (422).
+// { loc, msg } objects for validation errors (422). Jira's "needs more fields" answer is an
+// object: { message, fields: [field ids] }.
 function describeError(body: unknown, status: number): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === 'string' && detail) return detail;
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const { message, fields } = detail as { message?: unknown; fields?: unknown };
+    if (typeof message === 'string' && message) {
+      const names = Array.isArray(fields) ? fields.filter((f): f is string => typeof f === 'string') : [];
+      return names.length ? `${message}: ${names.join(', ')}.` : message;
+    }
+  }
   if (Array.isArray(detail)) {
     const messages = detail
       .map((item) => (item as { msg?: unknown } | null)?.msg)

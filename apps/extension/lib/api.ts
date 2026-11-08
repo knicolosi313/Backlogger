@@ -1,6 +1,7 @@
 import { ApiError, request, type ApiConfig } from './http';
 import type {
   BoardAnalytics,
+  Creativity,
   ExportRecord,
   ExportStatus,
   ImportResult,
@@ -8,14 +9,23 @@ import type {
   InvestKey,
   MeetingSummary,
   ProcessingStatus,
+  Provider,
   SelectedBoard,
+  Settings,
   Story,
   StoryDecision,
   StoryEdit,
   StoryStatus,
-  TrelloBoard,
 } from './types';
 import { INVEST_KEYS } from './types';
+import {
+  buildAdditionalFields,
+  getJiraConnection,
+  jiraFieldContext,
+  listJiraRequiredFields,
+  parseJiraBoardExternalId,
+} from './jira';
+import { boardProvider, cardUrl, importDestination } from './provider';
 
 // Everything here talks to our FastAPI backend. Trello itself is in trello.ts.
 // IDs are the backend's UUIDs unless the name says "external".
@@ -30,17 +40,22 @@ interface BoardWire {
   name: string;
 }
 
-function toSelectedBoard(board: BoardWire): SelectedBoard {
-  return { id: board.id, externalId: board.external_id, name: board.name };
+function toSelectedBoard(board: BoardWire, provider: Provider): SelectedBoard {
+  return { id: board.id, externalId: board.external_id, name: board.name, provider };
 }
 
-export async function registerBoard(cfg: ApiConfig, board: TrelloBoard): Promise<SelectedBoard> {
+// `externalId` is Trello's board id, or Jira's "siteId:projectId" (see jira.ts)
+export async function registerBoard(
+  cfg: ApiConfig,
+  board: { provider: Provider; externalId: string; name: string },
+): Promise<SelectedBoard> {
+  const { provider, externalId } = board;
   try {
     const created = await request<BoardWire>(cfg, '/api/boards', {
       method: 'POST',
-      json: { provider: 'trello', external_id: board.id, name: board.name },
+      json: { provider, external_id: externalId, name: board.name },
     });
-    return toSelectedBoard(created);
+    return toSelectedBoard(created, provider);
   } catch (err) {
     // 409 means it's already registered, so go find it
     if (!(err instanceof ApiError) || err.status !== 409) throw err;
@@ -52,8 +67,8 @@ export async function registerBoard(cfg: ApiConfig, board: TrelloBoard): Promise
       cfg,
       `/api/boards?limit=${pageSize}&offset=${offset}`,
     );
-    const existing = page.find((b) => b.provider === 'trello' && b.external_id === board.id);
-    if (existing) return toSelectedBoard(existing);
+    const existing = page.find((b) => b.provider === provider && b.external_id === externalId);
+    if (existing) return toSelectedBoard(existing, provider);
     if (page.length < pageSize) throw new ApiError('This board is registered, but it could not be found.', 404);
   }
 }
@@ -103,10 +118,15 @@ export async function uploadMedia(cfg: ApiConfig, meetingId: string, audio: Blob
 
 // Refresh the meeting's board, which may differ from the board currently selected
 // in Settings. A failed refresh stays visible so we don't silently use stale work.
-export async function startProcessing(cfg: ApiConfig, meetingId: string): Promise<void> {
+// The backend only takes the creativity level when processing. It uses its own GEMINI_MODEL,
+// so the model setting isn't sent anywhere yet.
+export async function startProcessing(cfg: ApiConfig, meetingId: string, creativity: Creativity): Promise<void> {
   const meeting = await request<MeetingWire>(cfg, `/api/meetings/${encodeURIComponent(meetingId)}`);
   await request(cfg, `/api/boards/${encodeURIComponent(meeting.board_id)}/context/sync`, { method: 'POST' });
-  await request(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/process`, { method: 'POST' });
+  await request(cfg, `/api/meetings/${encodeURIComponent(meetingId)}/process`, {
+    method: 'POST',
+    json: { creativity },
+  });
 }
 
 export async function getProcessingStatus(cfg: ApiConfig, meetingId: string): Promise<ProcessingStatus> {
@@ -228,12 +248,8 @@ function toStory(wire: StoryWire): Story {
   };
 }
 
-function cardUrlFor(externalCardId: string): string {
-  return `https://trello.com/c/${externalCardId}`;
-}
-
-export async function listStories(cfg: ApiConfig, boardId: string): Promise<Story[]> {
-  const board = `/api/boards/${encodeURIComponent(boardId)}`;
+export async function listStories(cfg: ApiConfig, selected: SelectedBoard): Promise<Story[]> {
+  const board = `/api/boards/${encodeURIComponent(selected.id)}`;
   const [stories, imports] = await Promise.all([
     request<StoryWire[]>(cfg, `${board}/stories?limit=100`),
     // only used for card links, so don't let a failure here hide the stories
@@ -243,7 +259,8 @@ export async function listStories(cfg: ApiConfig, boardId: string): Promise<Stor
   return stories.map((wire) => {
     const story = toStory(wire);
     const cardId = cards.get(wire.id);
-    return cardId ? { ...story, cardUrl: cardUrlFor(cardId) } : story;
+    const url = cardId ? cardUrl(selected, cardId) : undefined;
+    return url ? { ...story, cardUrl: url } : story;
   });
 }
 
@@ -291,31 +308,62 @@ export function momentUrl(webAppUrl: string, meetingId: string, seconds: number)
   return `${webAppUrl.replace(/\/+$/, '')}/meetings/${meetingId}?t=${Math.floor(seconds)}`;
 }
 
+// The values for the project's required fields, built from what was saved in Settings. The
+// field list is fetched fresh so a change on the Jira side is noticed before any story is sent.
+async function jiraFieldsFor(
+  settings: Settings,
+  board: SelectedBoard,
+  issueTypeId: string,
+): Promise<Record<string, unknown>> {
+  const ids = parseJiraBoardExternalId(board.externalId);
+  if (!ids) throw new Error('This Jira project is not set up correctly. Pick it again in Settings.');
+
+  const [required, connection] = await Promise.all([
+    listJiraRequiredFields(settings, ids.siteId, ids.projectId, issueTypeId),
+    getJiraConnection(settings),
+  ]);
+  const saved = settings.jiraFieldValues;
+  const values = saved?.for === jiraFieldContext(board.externalId, issueTypeId) ? saved.values : {};
+
+  const { fields, missing } = buildAdditionalFields(required, values, connection.accountId);
+  if (missing.length) {
+    throw new Error(`Jira needs ${missing.join(', ')} before it will create issues. Fill them in under Jira in Settings.`);
+  }
+  return fields;
+}
+
 // One request per story. If some fail we still try the rest, then report how it went.
-export async function importStories(
-  cfg: ApiConfig & { webAppUrl: string },
-  boardId: string,
-  stories: Story[],
-  listId: string | undefined,
-): Promise<ImportResult[]> {
-  if (!listId) throw new Error('Pick a Trello list to import into in Settings.');
+// The backend picks Trello or Jira from the board, but the destination field differs:
+// Trello wants a list_id and Jira wants an issue_type_id.
+export async function importStories(settings: Settings, stories: Story[]): Promise<ImportResult[]> {
+  const board = settings.selectedBoard;
+  if (!board) throw new Error('Pick a destination in Settings first.');
+
+  const isJira = boardProvider(board) === 'jira';
+  const destinationId = importDestination(settings).id;
+  if (!destinationId) {
+    throw new Error(isJira ? 'Pick a Jira issue type to import as in Settings.' : 'Pick a Trello list to import into in Settings.');
+  }
+  const destination = isJira
+    ? { issue_type_id: destinationId, additional_fields: await jiraFieldsFor(settings, board, destinationId) }
+    : { list_id: destinationId };
 
   const results: ImportResult[] = [];
   let firstError = '';
   let failed = 0;
   for (const story of stories) {
     try {
-      const saved = await request<ImportWire>(cfg, `/api/boards/${encodeURIComponent(boardId)}/imports`, {
+      const saved = await request<ImportWire>(settings, `/api/boards/${encodeURIComponent(board.id)}/imports`, {
         method: 'POST',
         json: {
           story_id: story.id,
-          list_id: listId,
-          evidence_url: momentUrl(cfg.webAppUrl, story.meetingId, story.evidence[0]?.startSeconds ?? 0),
+          ...destination,
+          evidence_url: momentUrl(settings.webAppUrl, story.meetingId, story.evidence[0]?.startSeconds ?? 0),
         },
       });
       results.push({
         storyId: story.id,
-        cardUrl: saved.external_card_id ? cardUrlFor(saved.external_card_id) : '',
+        cardUrl: (saved.external_card_id && cardUrl(board, saved.external_card_id)) || '',
         duplicate: story.status === 'imported',
       });
     } catch (err) {

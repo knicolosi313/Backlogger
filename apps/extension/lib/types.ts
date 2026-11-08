@@ -13,18 +13,33 @@ export interface Settings {
   autoImport: boolean;
   autoImportThreshold: number; // 0 to 1, compared with story confidence
 
+  // The board (Trello) or project (Jira) meetings belong to. Only one provider is connected
+  // at a time, so there's only one of these.
   selectedBoard?: SelectedBoard;
   // the Trello list imports go to. The backend wants the id, the name is just for display
   targetList: string;
   targetListId?: string;
 
+  // Jira only: the site being browsed, and the issue type imports are created as
+  jiraSite?: JiraSite;
+  jiraIssueType?: JiraIssueType;
+  // What was typed into the project's required fields. `for` names the project and issue type
+  // they were entered for, so values for another one are ignored (see jiraFieldContext).
+  jiraFieldValues?: { for: string; values: JiraFieldValues };
+
   consentReminder: boolean;
 }
 
+// Where stories get exported to. Only one is connected at a time.
+export type Provider = 'trello' | 'jira';
+
 export interface SelectedBoard {
   id: string; // our database id
-  externalId: string; // Trello's id
+  externalId: string; // Trello's board id, or Jira's "siteId:projectId"
   name: string;
+  // settings saved before Jira support have no provider, and those were all Trello
+  provider?: Provider;
+  siteUrl?: string; // Jira only, for linking to issues
 }
 
 export interface TrelloBoard {
@@ -44,10 +59,58 @@ export interface TrelloConnection {
   expiresAt?: string | null;
 }
 
+export interface JiraConnection {
+  connected: boolean;
+  displayName?: string | null;
+  accountId?: string | null;
+  expiresAt?: string | null;
+}
+
+export interface JiraSite {
+  id: string; // the site's cloud id
+  name: string;
+  url: string;
+}
+
+export interface JiraProject {
+  id: string;
+  key: string;
+  name: string;
+}
+
+export interface JiraIssueType {
+  id: string;
+  name: string;
+}
+
+// A field Jira insists on when creating an issue, beyond the ones we fill in ourselves.
+// `kind` is how we ask for it, and decides the shape of the value we send (see jira.ts).
+export type JiraFieldKind =
+  | 'text'
+  | 'richtext'
+  | 'number'
+  | 'date'
+  | 'datetime'
+  | 'select'
+  | 'user'
+  | 'labels'
+  | 'json'; // anything else: the person types the JSON Jira wants
+
+export interface JiraField {
+  id: string; // like "customfield_10010"
+  name: string;
+  kind: JiraFieldKind;
+  multiple: boolean; // select only: more than one choice allowed
+  options: Array<{ id: string; label: string }>; // select only
+}
+
+// What was typed for each field, by field id. Multi-select is a list, everything else text.
+export type JiraFieldValues = Record<string, string | string[]>;
+
 export interface BoardConnection {
   connected: boolean;
   boardId?: string; // our database id
-  externalBoardId?: string; // Trello's id
+  externalBoardId?: string; // Trello's id, or Jira's "siteId:projectId"
   boardName?: string;
 }
 

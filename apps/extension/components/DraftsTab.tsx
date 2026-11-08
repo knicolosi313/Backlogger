@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { importStories, listStories } from '@/lib/api';
+import { PICK_DESTINATION_HINT, boardProvider, destinationText } from '@/lib/provider';
 import type { BoardConnection, Settings, Story, StoryStatus } from '@/lib/types';
 import { useAutoReload, useLoad } from '@/lib/useLoad';
 import { ConfidenceBadge, QualityBadge, StatusBadge } from './Badges';
@@ -25,17 +26,19 @@ export function DraftsTab({ settings, board, selectedStoryId, onSelectStory }: P
   const [importMessage, setImportMessage] = useState('');
   const [importing, setImporting] = useState(false);
 
+  const selectedBoard = settings.selectedBoard;
   const stories = useLoad(
-    () => (board.boardId ? listStories(settings, board.boardId) : Promise.resolve([])),
-    [board.boardId],
+    () => (selectedBoard ? listStories(settings, selectedBoard) : Promise.resolve([])),
+    [selectedBoard?.id, selectedBoard?.provider, selectedBoard?.siteUrl],
   );
+  const isJira = boardProvider(selectedBoard) === 'jira';
 
   // Drafts show up when processing finishes, which can be after this tab opened. Don't
   // refresh while a story is open so it can't change under the reviewer.
   useAutoReload(stories.reload, 5000, Boolean(board.boardId) && !selectedStoryId);
 
   if (!board.connected || !board.boardId) {
-    return <p className="hint">Pick a Trello board in Settings to see draft stories.</p>;
+    return <p className="hint">{PICK_DESTINATION_HINT} to see draft stories.</p>;
   }
 
   const allStories = stories.data ?? [];
@@ -66,11 +69,11 @@ export function DraftsTab({ settings, board, selectedStoryId, onSelectStory }: P
     setImporting(true);
     setImportMessage('');
     try {
-      const results = await importStories(settings, board.boardId, acceptedStories, settings.targetListId);
+      const results = await importStories(settings, acceptedStories);
       const created = results.filter((r) => !r.duplicate).length;
       const skipped = results.length - created;
       setImportMessage(
-        `Imported ${created} to "${settings.targetList}".` + (skipped ? ` ${skipped} already imported, skipped.` : ''),
+        `Imported ${created} to ${destinationText(settings)}.` + (skipped ? ` ${skipped} already imported, skipped.` : ''),
       );
     } catch (err) {
       setImportMessage(err instanceof Error ? err.message : 'Import failed.');
@@ -121,9 +124,13 @@ export function DraftsTab({ settings, board, selectedStoryId, onSelectStory }: P
       {acceptedStories.length > 0 && (
         <section className="card stack">
           <button className="primary" disabled={importing} onClick={handleImport}>
-            {importing ? 'Importing…' : `Import ${acceptedStories.length} accepted to ${settings.targetList}`}
+            {importing ? 'Importing…' : `Import ${acceptedStories.length} accepted to ${destinationText(settings)}`}
           </button>
-          <p className="hint">Cards get an "AI Draft" label and a link back to the meeting moment.</p>
+          <p className="hint">
+            {isJira
+              ? 'Issues get an "ai-draft" label and a link back to the meeting moment.'
+              : 'Cards get an "AI Draft" label and a link back to the meeting moment.'}
+          </p>
         </section>
       )}
       {importMessage && <p className="status" role="status">{importMessage}</p>}

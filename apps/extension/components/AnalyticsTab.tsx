@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getAnalytics, getStoryImport, listBoardImports } from '@/lib/api';
 import { formatDateTime, formatPercent } from '@/lib/format';
 import { EXPORT_STATUS_LABELS, INVEST_LABELS, STORY_STATUS_LABELS } from '@/lib/options';
+import { PICK_DESTINATION_HINT, providerLabel } from '@/lib/provider';
 import type { BoardConnection, ExportRecord, ExportStatus, Settings, StoryStatus } from '@/lib/types';
 import { INVEST_KEYS } from '@/lib/types';
 import { useAutoReload, useLoad } from '@/lib/useLoad';
@@ -19,7 +20,7 @@ const STATUS_ORDER: StoryStatus[] = ['draft', 'needs_changes', 'accepted', 'impo
 
 export function AnalyticsTab({ settings, board, onOpenStory }: Props) {
   if (!board.connected || !board.boardId) {
-    return <p className="hint">Pick a Trello board in Settings to see analytics.</p>;
+    return <p className="hint">{PICK_DESTINATION_HINT} to see analytics.</p>;
   }
 
   // each section loads on its own, so one failing doesn't hide the other
@@ -154,7 +155,7 @@ function ExportHistory({ settings, boardId }: { settings: Settings; boardId: str
       <h2>Export history</h2>
       {history.error && <p className="status error">{history.error}</p>}
       {history.loading && !history.data && <p className="hint">Loading export history…</p>}
-      {history.data && records.length === 0 && <p className="hint">Nothing has been exported to Trello yet.</p>}
+      {history.data && records.length === 0 && <p className="hint">Nothing has been exported to {providerLabel(settings.selectedBoard)} yet.</p>}
 
       {records.length > 0 && (
         <>

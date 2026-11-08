@@ -4,6 +4,7 @@ import { formatClock, formatPercent, formatShortDate, formatSize } from '@/lib/f
 import type { PanelToBackground } from '@/lib/messages';
 import { AUDIO_FILE_ACCEPT, PROCESSING_LABELS, audioTypeFor } from '@/lib/options';
 import { clearPendingAudio, loadPendingAudio, savePendingAudio } from '@/lib/pendingAudio';
+import { PICK_DESTINATION_HINT, destinationText, providerLabel } from '@/lib/provider';
 import { recorderState, settingsItem } from '@/lib/storage';
 import type { BoardConnection, RecorderState, Settings } from '@/lib/types';
 import { useLoad } from '@/lib/useLoad';
@@ -172,7 +173,7 @@ export function RecordTab({ settings, board, onReviewStories }: Props) {
 
       <section className="stack">
         <h2>Recent meetings</h2>
-        {!board.connected && <p className="hint">Pick a Trello board in Settings to see your meetings.</p>}
+        {!board.connected && <p className="hint">{PICK_DESTINATION_HINT} to see your meetings.</p>}
         {board.connected && meetings.error && <p className="status error">{meetings.error}</p>}
         {board.connected && meetings.data?.length === 0 && <p className="hint">No meetings yet.</p>}
         <ul className="list">
@@ -282,7 +283,7 @@ function CreateMeetingCard({ settings, board }: { settings: Settings; board: Boa
   if (!board.connected) {
     return (
       <section className="card stack">
-        <p className="hint">Pick a Trello board in Settings first. Every meeting belongs to a board.</p>
+        <p className="hint">{PICK_DESTINATION_HINT} first. Every meeting belongs to a board or project.</p>
       </section>
     );
   }
@@ -393,7 +394,7 @@ function RecordedCard({
       }
 
       await uploadMedia(settings, state.meetingId, audio.blob, audio.fileName);
-      await startProcessing(settings, state.meetingId);
+      await startProcessing(settings, state.meetingId, settings.creativity);
       await clearPendingAudio().catch(() => {});
       await recorderState.setValue({ status: 'processing', meetingId: state.meetingId, processingStatus: 'queued' });
     } catch (err) {
@@ -526,8 +527,8 @@ function AutoImportToggle({ settings }: { settings: Settings }) {
       </label>
       <p className="hint">
         {settings.autoImport
-          ? `Stories at ${formatPercent(settings.autoImportThreshold)} confidence or higher, with evidence from the meeting, go straight to "${settings.targetList}" with an AI Draft label. Everything else waits for your review.`
-          : 'Off. You approve every story before it reaches Trello.'}
+          ? `Stories at ${formatPercent(settings.autoImportThreshold)} confidence or higher, with evidence from the meeting, go straight to ${destinationText(settings)} with an AI Draft label. Everything else waits for your review.`
+          : `Off. You approve every story before it reaches ${providerLabel(settings.selectedBoard)}.`}
       </p>
     </section>
   );

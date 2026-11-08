@@ -122,6 +122,7 @@ button.link {
   background: var(--paper); color: var(--ink); font: inherit; font-size: 14px;
 }
 .field input[type='range'] { padding: 0; }
+fieldset.field { margin: 0; padding: 0; border: 0; min-width: 0; } /* a checkbox group, laid out like the other fields */
 
 .checkbox { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
 .checkbox input { margin-top: 3px; }
