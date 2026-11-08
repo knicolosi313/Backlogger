@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from services.worker.objects import DraftStory, StoryReview
 
@@ -40,6 +40,23 @@ class StoryEdit(RequestBody):
 
 class StoryDecision(RequestBody):
     decision: Literal["accept", "reject"]
+
+
+class ImportCreate(RequestBody):
+    story_id: UUID
+    list_id: str = Field(min_length=1, max_length=255)
+    evidence_url: HttpUrl
+
+
+class ImportRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    story_id: UUID
+    idempotency_key: str
+    external_card_id: str | None
+    status: Literal["pending", "completed", "failed"]
+    created_at: datetime
 
 
 class StoryRead(BaseModel):

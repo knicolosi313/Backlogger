@@ -30,6 +30,9 @@ queries, pipeline checkpoints, and test commands.
 API routes and an upload-to-review walkthrough: [services/api/README.md](services/api/README.md).
 Interactive API documentation: `http://127.0.0.1:8000/docs`.
 
+Trello export configuration, request examples, and retry behavior:
+[docs/TRELLO_EXPORTS.md](docs/TRELLO_EXPORTS.md).
+
 ## Draft outcome analytics
 
 The board analytics endpoint (`GET /api/boards/{id}/analytics`) includes

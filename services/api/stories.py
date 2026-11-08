@@ -6,12 +6,20 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import func
 from sqlmodel import select
 
-from services.models import AnalyticsEvent, Meeting, Story, StoryRevision
+from services.models import AnalyticsEvent, Import, Meeting, Story, StoryRevision
 
 from .dependencies import SessionDep, get_record
 from .schemas import StoryDecision, StoryEdit, StoryRead
 
 router = APIRouter(prefix="/api/stories", tags=["Stories"])
+
+
+def check_pending_import(session, story: Story) -> None:
+    pending = session.exec(
+        select(Import.id).where(Import.story_id == story.id, Import.status == "pending")
+    ).first()
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="Finish or reconcile the pending export first")
 
 
 def record_event(session, story: Story, event_type: str) -> None:
@@ -39,6 +47,7 @@ def get_revisions(story_id: UUID, session: SessionDep):
 @router.patch("/{story_id}", response_model=StoryRead)
 def edit_story(story_id: UUID, body: StoryEdit, session: SessionDep):
     story = get_record(session, Story, story_id, lock=True)
+    check_pending_import(session, story)
     if story.status == "imported":
         raise HTTPException(status_code=409, detail="Imported stories cannot be edited here")
     latest_revision = session.exec(
@@ -66,6 +75,7 @@ def edit_story(story_id: UUID, body: StoryEdit, session: SessionDep):
 @router.post("/{story_id}/decision", response_model=StoryRead)
 def decide_story(story_id: UUID, body: StoryDecision, session: SessionDep):
     story = get_record(session, Story, story_id, lock=True)
+    check_pending_import(session, story)
     if story.status == "imported":
         raise HTTPException(status_code=409, detail="Imported stories cannot be reviewed here")
     new_status = "accepted" if body.decision == "accept" else "rejected"

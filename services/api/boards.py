@@ -1,18 +1,33 @@
 """Board registration, draft listings, and analytics."""
 
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, literal_column
 from sqlmodel import select
+
+from adapters.trello.client import TrelloClient
 
 from services.models import AnalyticsEvent, Board, Meeting, Story, StoryRevision
 
 from .dependencies import SessionDep, get_record
+from .exports import export_story, get_trello_client
+from .schemas import ImportCreate, ImportRead
 from .schemas import BoardAnalytics, BoardCreate, DailyAnalytics, StoryRead, StoryStatus
 
 router = APIRouter(prefix="/api/boards", tags=["Boards"])
+
+
+@router.post("/{board_id}/imports", response_model=ImportRead)
+def import_story(
+    board_id: UUID,
+    body: ImportCreate,
+    session: SessionDep,
+    client: Annotated[TrelloClient, Depends(get_trello_client)],
+):
+    return export_story(session, client, board_id, body)
 
 
 @router.post("", response_model=Board, status_code=201)
