@@ -12,8 +12,11 @@ export default defineConfig({
       'sidePanel',
       'activeTab', // granted when the toolbar icon is clicked
     ],
-    // the API server. Tighten once there's a real URL
-    host_permissions: ['http://localhost/*', 'http://127.0.0.1/*'],
+    host_permissions: [
+      'https://backlogger-production.up.railway.app/*',
+      'http://localhost/*',
+      'http://127.0.0.1/*',
+    ],
     action: { default_title: 'Open Meeting-to-Backlog' },
   },
 });

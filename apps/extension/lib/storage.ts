@@ -3,7 +3,7 @@ import type { RecorderState, Settings } from './types';
 // 'local:' is kept on disk, 'session:' is cleared when the browser closes
 
 export const DEFAULT_SETTINGS: Settings = {
-  apiUrl: 'http://127.0.0.1:8000', // same host as the backend's Trello callback, so the session cookie matches
+  apiUrl: 'https://backlogger-production.up.railway.app',
   apiToken: '',
   webAppUrl: 'http://localhost:5173',
 
