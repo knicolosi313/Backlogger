@@ -164,6 +164,7 @@ export interface MeetingSummary {
   id: string;
   title: string;
   startedAt: string; // ISO date
+  hasAudio: boolean;
   status: ProcessingStatus;
   // the backend doesn't send these yet
   durationSeconds?: number;

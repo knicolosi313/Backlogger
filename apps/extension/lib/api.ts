@@ -176,11 +176,12 @@ export async function countStoriesForMeeting(cfg: ApiConfig, meetingId: string):
 }
 
 export async function listMeetings(cfg: ApiConfig, boardId: string): Promise<MeetingSummary[]> {
-  const meetings = await request<MeetingWire[]>(cfg, `/api/meetings?board_id=${encodeURIComponent(boardId)}&limit=10`);
+  const meetings = await request<MeetingWire[]>(cfg, `/api/meetings?board_id=${encodeURIComponent(boardId)}&limit=5`);
   return meetings.map((m) => ({
     id: m.id,
     title: m.title,
     startedAt: m.created_at,
+    hasAudio: Boolean(m.media_key),
     status: meetingStatus(m),
   }));
 }

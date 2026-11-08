@@ -74,6 +74,12 @@ data remains shared as in the existing app.
 
 ## Playback in the extension
 
+The Record tab shows the five most recent meetings for the selected board,
+newest first. Click a meeting to play its audio inside the extension from the
+beginning. Only one recent-meeting player is open at a time. Switching meetings,
+closing audio, or switching boards stops playback and releases its temporary
+browser URL. Meetings without an uploaded recording show **No audio uploaded**.
+
 Click **Jump to moment** under a story's evidence to open the meeting audio
 player inside the extension. It seeks to that evidence timestamp and attempts
 playback. If Chrome blocks autoplay, use the player's Play control. Repeated

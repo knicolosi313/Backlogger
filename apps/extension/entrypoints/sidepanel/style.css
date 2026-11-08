@@ -141,6 +141,7 @@ details[open] > summary { margin-bottom: 10px; }
   background: var(--card);
 }
 .story-title { font-weight: 600; }
+.meeting-row[aria-expanded='true'] { border-color: var(--accent); }
 
 .bullets { margin: 0; padding-left: 18px; }
 

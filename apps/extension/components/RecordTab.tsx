@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { countStoriesForMeeting, createMeeting, getProcessingStatus, listMeetings, startProcessing, uploadMedia } from '@/lib/api';
+import { countStoriesForMeeting, createMeeting, getProcessingStatus, startProcessing, uploadMedia } from '@/lib/api';
 import { AutoImportProgress } from './AutoImportProgress';
-import { formatClock, formatPercent, formatShortDate, formatSize } from '@/lib/format';
+import { RecentMeetings } from './RecentMeetings';
+import { formatClock, formatPercent, formatSize } from '@/lib/format';
 import type { PanelToBackground } from '@/lib/messages';
 import { AUDIO_FILE_ACCEPT, PROCESSING_LABELS, audioTypeFor } from '@/lib/options';
 import { clearPendingAudio, loadPendingAudio, savePendingAudio } from '@/lib/pendingAudio';
@@ -101,12 +102,6 @@ export function RecordTab({ settings, board, onReviewStories }: Props) {
     })();
   }, [status]);
 
-  // reload the meeting list when a meeting is created or finishes
-  const meetings = useLoad(
-    () => (board.boardId ? listMeetings(settings, board.boardId) : Promise.resolve([])),
-    [board.boardId, state?.status === 'created', state?.status === 'done'],
-  );
-
   if (!state) return null;
 
   return (
@@ -172,29 +167,10 @@ export function RecordTab({ settings, board, onReviewStories }: Props) {
 
       <AutoImportToggle settings={settings} />
 
-      <section className="stack">
-        <h2>Recent meetings</h2>
-        {!board.connected && <p className="hint">{PICK_DESTINATION_HINT} to see your meetings.</p>}
-        {board.connected && meetings.error && <p className="status error">{meetings.error}</p>}
-        {board.connected && meetings.data?.length === 0 && <p className="hint">No meetings yet.</p>}
-        <ul className="list">
-          {meetings.data?.map((meeting) => (
-            <li key={meeting.id} className="list-row">
-              <strong>{meeting.title}</strong>
-              <span className="hint">
-                {[
-                  formatShortDate(meeting.startedAt),
-                  PROCESSING_LABELS[meeting.status],
-                  meeting.durationSeconds !== undefined && `${Math.round(meeting.durationSeconds / 60)} min`,
-                  meeting.storyCount !== undefined && `${meeting.storyCount} stories`,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <RecentMeetings
+        key={`${settings.apiUrl}:${board.boardId}:${board.connected}`}
+        settings={settings} board={board} refreshKey={state.status}
+      />
     </div>
   );
 }
