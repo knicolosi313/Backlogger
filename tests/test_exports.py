@@ -218,3 +218,38 @@ def test_missing_trello_credentials_are_reported_without_network(monkeypatch):
     with pytest.raises(HTTPException) as error:
         exports.get_trello_client()
     assert error.value.status_code == 503
+
+
+def test_import_status_is_available_without_retrying_trello(export_case):
+    case = export_case
+    story_import_url = f"/api/stories/{case.story_id}/import"
+    history_url = f"/api/boards/{case.board_id}/imports"
+    assert case.api.get(story_import_url).status_code == 404
+    assert case.api.get(history_url).json() == []
+
+    case.trello.create_card.side_effect = requests.Timeout()
+    assert case.api.post(case.url, json=case.body).status_code == 502
+    previous_calls = len(case.trello.mock_calls)
+    response = case.api.get(story_import_url)
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert case.api.get(history_url, params={"status": "pending"}).json() == [response.json()]
+    assert case.api.get(history_url, params={"status": "completed"}).json() == []
+    assert case.api.get(history_url, params={"offset": 1}).json() == []
+    assert len(case.trello.mock_calls) == previous_calls
+
+
+def test_import_history_is_scoped_to_board_and_includes_completed_export(export_case):
+    case = export_case
+    result = case.api.post(case.url, json=case.body)
+    assert result.status_code == 200
+    assert case.api.get(f"/api/stories/{case.story_id}/import").json() == result.json()
+    assert case.api.get(f"/api/boards/{case.board_id}/imports").json() == [result.json()]
+    with case.session() as session:
+        other_board = Board(provider="trello", external_id=str(uuid4()), name="Other")
+        session.add(other_board)
+        session.commit()
+        other_id = other_board.id
+    assert case.api.get(f"/api/boards/{other_id}/imports").json() == []
+    assert case.api.get(f"/api/boards/{uuid4()}/imports").status_code == 404
+    assert case.api.get(f"/api/stories/{uuid4()}/import").status_code == 404

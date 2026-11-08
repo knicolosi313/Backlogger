@@ -33,6 +33,9 @@ Interactive API documentation: `http://127.0.0.1:8000/docs`.
 Trello export configuration, request examples, and retry behavior:
 [docs/TRELLO_EXPORTS.md](docs/TRELLO_EXPORTS.md).
 
+Frontend board/list selection and export-status endpoints:
+[docs/FRONTEND_API.md](docs/FRONTEND_API.md).
+
 ## Draft outcome analytics
 
 The board analytics endpoint (`GET /api/boards/{id}/analytics`) includes

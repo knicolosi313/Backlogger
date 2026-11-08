@@ -1,7 +1,7 @@
 """Board registration, draft listings, and analytics."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from adapters.trello.client import TrelloClient
 
-from services.models import AnalyticsEvent, Board, Meeting, Story, StoryRevision
+from services.models import AnalyticsEvent, Board, Import, Meeting, Story, StoryRevision
 
 from .dependencies import SessionDep, get_record
 from .exports import export_story, get_trello_client
@@ -28,6 +28,28 @@ def import_story(
     client: Annotated[TrelloClient, Depends(get_trello_client)],
 ):
     return export_story(session, client, board_id, body)
+
+
+@router.get("/{board_id}/imports", response_model=list[ImportRead])
+def list_imports(
+    board_id: UUID,
+    session: SessionDep,
+    status: Literal["pending", "completed", "failed"] | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Read export history, including attempts that still need reconciliation."""
+    get_record(session, Board, board_id)
+    query = (
+        select(Import).join(Story, Import.story_id == Story.id)
+        .join(Meeting, Story.meeting_id == Meeting.id)
+        .where(Meeting.board_id == board_id)
+    )
+    if status is not None:
+        query = query.where(Import.status == status)
+    return session.exec(
+        query.order_by(Import.created_at.desc(), Import.id).offset(offset).limit(limit)
+    ).all()
 
 
 @router.post("", response_model=Board, status_code=201)

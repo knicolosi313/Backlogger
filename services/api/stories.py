@@ -9,7 +9,7 @@ from sqlmodel import select
 from services.models import AnalyticsEvent, Import, Meeting, Story, StoryRevision
 
 from .dependencies import SessionDep, get_record
-from .schemas import StoryDecision, StoryEdit, StoryRead
+from .schemas import ImportRead, StoryDecision, StoryEdit, StoryRead
 
 router = APIRouter(prefix="/api/stories", tags=["Stories"])
 
@@ -33,6 +33,16 @@ def record_event(session, story: Story, event_type: str) -> None:
 @router.get("/{story_id}", response_model=StoryRead)
 def get_story(story_id: UUID, session: SessionDep):
     return get_record(session, Story, story_id)
+
+
+@router.get("/{story_id}/import", response_model=ImportRead)
+def get_story_import(story_id: UUID, session: SessionDep):
+    """Read the saved export result without calling Trello or retrying creation."""
+    get_record(session, Story, story_id)
+    import_record = session.exec(select(Import).where(Import.story_id == story_id)).first()
+    if import_record is None:
+        raise HTTPException(status_code=404, detail="Story has no export attempt")
+    return import_record
 
 
 @router.get("/{story_id}/revisions", response_model=list[StoryRevision])

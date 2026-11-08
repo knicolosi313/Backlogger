@@ -23,6 +23,20 @@ class BoardCreate(RequestBody):
     name: str = Field(min_length=1, max_length=255)
 
 
+class TrelloBoardRead(BaseModel):
+    """A board returned by Trello; id is the external ID, not our database UUID."""
+
+    id: str
+    name: str
+    url: str | None = None
+    closed: bool = False
+
+
+class TrelloListRead(BaseModel):
+    id: str
+    name: str
+
+
 class MeetingCreate(RequestBody):
     board_id: UUID
     title: str = Field(min_length=1, max_length=255)
