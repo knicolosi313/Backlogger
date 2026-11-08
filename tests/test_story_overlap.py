@@ -6,9 +6,10 @@ from unittest.mock import Mock
 import pytest
 
 from services.worker import board_context, pipeline
-from services.worker.objects import CritiqueResult, ExtractionResult, StoryRelationship
+from services.worker.objects import CritiqueResult, ExtractionResult, ScopeComparison, ScopeComparisons, StoryRelationship
 from services.worker.scope_review import apply_scope_findings
-from services.worker.scope_review import flag_unassessed_scope, missing_scope_checks
+from services.worker.prompts.scope import SCOPE_SYSTEM_PROMPT
+from services.worker.scope_review import flag_unassessed_scope, merge_scope_comparisons, missing_scope_checks
 
 
 @pytest.fixture
@@ -142,38 +143,69 @@ def test_an_unassessed_board_match_flags_only_the_draft_and_unassessed_pairs_fla
     assert first.confidence <= 0.84 and first.invest_score < 6
 
 
-@pytest.mark.parametrize("complete_retry", [True, False])
-def test_pipeline_retries_missing_scope_checks_instead_of_silently_passing_them(
-    calculator_case, pipeline_results, gemini_responses, monkeypatch, complete_retry,
-):
+def _run_with_followups(calculator_case, gemini_responses, monkeypatch, followups):
+    """Run the pipeline where the review leaves the one required pair out, then answer the follow-ups."""
     from google import genai
     extraction, critique = calculator_case
-    retried = critique.model_copy(deep=True)
-    if complete_retry:
-        retried.reviews[0].relationships = [StoryRelationship(
-            other_story_index=1, relationship="contains", reason="Multiplication is already in the broad scope.",
-        )]
     client = Mock()
     client.files.upload.return_value = SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
-    client.models.generate_content.side_effect = [SimpleNamespace(parsed=value) for value in (gemini_responses[0].parsed, extraction, critique, retried)]
+    responses = (gemini_responses[0].parsed, extraction, critique, *followups)
+    client.models.generate_content.side_effect = [SimpleNamespace(parsed=value) for value in responses]
     monkeypatch.setattr(genai, "Client", Mock(return_value=client))
     get_context = lambda result: {"draft_pairs": [{"left_index": 0, "right_index": 1, "similarity": 0.96}]}
     saved = {}
-    call = lambda: pipeline._run_pipeline(
+    pipeline._run_pipeline(
         "synthetic.wav", "test-model", lambda stage, output: saved.update({stage: output}), review_context=get_context,
     )
-    if complete_retry:
-        call()
-        assert saved["critique"].reviews[1].flags[0].criterion == "Independent"
-    else:
-        # still incomplete after the retry: keep the stories, but never pass the pair off as independent
-        call()
-        for review in saved["critique"].reviews:
-            assert review.flags[0].criterion == "Independent"
-            assert "Scope not compared with" in review.flags[0].issue
-            assert review.confidence <= 0.84
-        assert saved["critique"].reviews[0].invest_score < 6
-    assert "previous review omitted" in client.models.generate_content.call_args.kwargs["contents"]
+    return saved["critique"], client
+
+
+def test_omitted_comparisons_are_asked_for_on_their_own_and_a_real_overlap_is_flagged(
+    calculator_case, pipeline_results, gemini_responses, monkeypatch,
+):
+    followup = ScopeComparisons(comparisons=[ScopeComparison(
+        story_index=0, other_story_index=1, relationship="contains", reason="Multiplication is already in the broad scope.",
+    )])
+    critique, client = _run_with_followups(calculator_case, gemini_responses, monkeypatch, [followup])
+    assert critique.reviews[1].flags[0].criterion == "Independent"
+    assert "Scope conflict" in critique.reviews[1].flags[0].issue
+    call = client.models.generate_content.call_args
+    assert call.kwargs["config"].system_instruction == SCOPE_SYSTEM_PROMPT
+    assert "Implement multiplication" in call.kwargs["contents"]  # both stories' text is supplied
+    assert client.models.generate_content.call_count == 4  # transcript, stories, review, one follow-up
+
+
+def test_independent_follow_up_leaves_stories_unflagged_so_they_can_auto_import(
+    calculator_case, pipeline_results, gemini_responses, monkeypatch,
+):
+    followup = ScopeComparisons(comparisons=[ScopeComparison(
+        story_index=0, other_story_index=1, relationship="independent", reason="Different operations.",
+    )])
+    critique, _ = _run_with_followups(calculator_case, gemini_responses, monkeypatch, [followup])
+    assert all(not review.flags and review.invest_score == 6 and review.confidence == 0.95 for review in critique.reviews)
+    assert critique.reviews[0].relationships[0].relationship == "independent"
+
+
+def test_follow_up_that_is_still_incomplete_is_retried_once_then_flagged_not_failed(
+    calculator_case, pipeline_results, gemini_responses, monkeypatch,
+):
+    empty = ScopeComparisons(comparisons=[])
+    critique, client = _run_with_followups(calculator_case, gemini_responses, monkeypatch, [empty, empty])
+    assert client.models.generate_content.call_count == 5
+    for review in critique.reviews:
+        assert review.flags[0].criterion == "Independent"
+        assert "Scope not compared with" in review.flags[0].issue
+        assert review.confidence <= 0.84 and review.invest_score < 6
+
+
+def test_follow_up_answers_that_name_both_or_neither_target_are_ignored(calculator_case):
+    _, critique = calculator_case
+    merge_scope_comparisons(critique, ScopeComparisons(comparisons=[
+        ScopeComparison(story_index=0, other_story_index=1, existing_story_id="trello:x", relationship="independent", reason="x"),
+        ScopeComparison(story_index=0, relationship="independent", reason="x"),
+        ScopeComparison(story_index=7, other_story_index=1, relationship="independent", reason="no such review"),
+    ]))
+    assert not critique.reviews[0].relationships and not critique.reviews[1].relationships
 
 
 def test_pipeline_supplies_embedding_pairs_and_saves_consistent_flags(

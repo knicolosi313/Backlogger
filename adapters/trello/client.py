@@ -1,6 +1,33 @@
+import threading
+import time
+from collections import deque
+
 import requests
 from services.worker.objects import DraftStory
 from services.worker.timecode import format_clock
+
+# Trello rejects a token that sends more than 100 requests in 10 seconds. Stay well under that. The
+# budget is shared by every client using the same token, so imports can run side by side without
+# any of them being turned away (a rejected card creation can't safely be retried).
+RATE_LIMIT_REQUESTS = 80
+RATE_LIMIT_WINDOW_SECONDS = 10.0
+_sent: dict[str, deque] = {}
+_sent_lock = threading.Lock()
+
+
+def _wait_for_request_slot(token: str) -> None:
+    while True:
+        with _sent_lock:
+            window = _sent.setdefault(token, deque())
+            now = time.monotonic()
+            while window and now - window[0] >= RATE_LIMIT_WINDOW_SECONDS:
+                window.popleft()
+            if len(window) < RATE_LIMIT_REQUESTS:
+                window.append(now)
+                return
+            delay = RATE_LIMIT_WINDOW_SECONDS - (now - window[0])
+        time.sleep(delay)
+
 
 class TrelloClient:
     """Talk to Trello; database records and export decisions live in the service layer."""
@@ -8,12 +35,16 @@ class TrelloClient:
     def __init__(self, api_key: str, token: str):
         self.api_key = api_key
         self.token = token
+        # One connection reused for every call, instead of a new TLS handshake each time.
+        # A client belongs to one thread: each export builds its own.
+        self._session = requests.Session()
 
     def _request(self, method: str, path: str, *, params=None, body=None):
         """Send one request with authentication, a timeout, and HTTP error checks."""
         query = dict(params or {})
         query.update(key=self.api_key, token=self.token)
-        response = requests.request(
+        _wait_for_request_slot(self.token)
+        response = self._session.request(
             method,
             f"https://api.trello.com/1/{path}",
             params=query,

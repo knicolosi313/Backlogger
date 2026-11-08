@@ -420,31 +420,43 @@ export async function importStories(settings: Settings, stories: Story[]): Promi
     ? { issue_type_id: destinationId, additional_fields: await jiraFieldsFor(settings, board, destinationId) }
     : { list_id: destinationId };
 
+  const importOne = async (story: Story): Promise<ImportResult> => {
+    const saved = await request<ImportWire>(settings, `/api/boards/${encodeURIComponent(board.id)}/imports`, {
+      method: 'POST',
+      json: {
+        story_id: story.id,
+        ...destination,
+      },
+    });
+    return {
+      storyId: story.id,
+      cardUrl: (saved.external_card_id && cardUrl(board, saved.external_card_id)) || '',
+      duplicate: story.status === 'imported',
+    };
+  };
+
+  // Trello stories go a few at a time, which is much faster than one after another. The backend
+  // keeps their combined Trello requests under Trello's rate limit. Jira stays one at a time.
+  const batchSize = isJira ? 1 : TRELLO_IMPORT_BATCH;
   const results: ImportResult[] = [];
   let firstError = '';
   let failed = 0;
-  for (const story of stories) {
-    try {
-      const saved = await request<ImportWire>(settings, `/api/boards/${encodeURIComponent(board.id)}/imports`, {
-        method: 'POST',
-        json: {
-          story_id: story.id,
-          ...destination,
-        },
-      });
-      results.push({
-        storyId: story.id,
-        cardUrl: (saved.external_card_id && cardUrl(board, saved.external_card_id)) || '',
-        duplicate: story.status === 'imported',
-      });
-    } catch (err) {
-      failed += 1;
-      firstError ||= err instanceof Error ? err.message : 'Import failed.';
+  for (let start = 0; start < stories.length; start += batchSize) {
+    const outcomes = await Promise.allSettled(stories.slice(start, start + batchSize).map(importOne));
+    for (const outcome of outcomes) {
+      if (outcome.status === 'fulfilled') {
+        results.push(outcome.value);
+      } else {
+        failed += 1;
+        firstError ||= outcome.reason instanceof Error ? outcome.reason.message : 'Import failed.';
+      }
     }
   }
   if (failed) throw new Error(`${firstError} (${results.length} imported, ${failed} failed.)`);
   return results;
 }
+
+const TRELLO_IMPORT_BATCH = 3;
 
 // ---- analytics ----
 

@@ -1,5 +1,6 @@
 """Coordinate accepted-story exports between PostgreSQL and Trello."""
 
+import threading
 from uuid import UUID
 
 import requests
@@ -16,14 +17,20 @@ from .schemas import ImportCreate, ImportRead
 from .trello_auth import get_trello_client
 
 
+# Imports can run side by side. Without this, two of them could both find the label missing
+# and each create one.
+_label_lock = threading.Lock()
+
+
 def _get_ai_draft_label(client: TrelloClient, trello_board_id: str) -> str:
     """Reuse the board's AI Draft label, or create it if it is missing."""
-    for label in client.list_labels(trello_board_id):
-        if label["name"] == "AI Draft":
-            return label["id"]
+    with _label_lock:
+        for label in client.list_labels(trello_board_id):
+            if label["name"] == "AI Draft":
+                return label["id"]
 
-    label = client.create_label(trello_board_id, "AI Draft", "blue")
-    return label["id"]
+        label = client.create_label(trello_board_id, "AI Draft", "blue")
+        return label["id"]
 
 
 def _ensure_story_checklists(client: TrelloClient, card_id: str, draft: DraftStory) -> None:

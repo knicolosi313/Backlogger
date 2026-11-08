@@ -1,6 +1,9 @@
 """Keep explicit model findings consistent with the visible INVEST flags."""
 
-from .objects import InvestFlag
+import json
+
+from .board_context import content_text
+from .objects import InvestFlag, StoryRelationship
 
 
 def missing_scope_checks(critique, context):
@@ -20,6 +23,38 @@ def missing_scope_checks(critique, context):
         if (match["draft_index"], match["reference"]) not in board_checks:
             missing.append({"story_index": match["draft_index"], "existing_story_id": match["reference"]})
     return missing
+
+
+def scope_followup_input(extraction, review_context, missing):
+    """The omitted comparisons with both stories' text, so they can be asked about on their own."""
+    board_text = {match["reference"]: match.get("story") for match in review_context.get("board_matches", [])}
+    items = []
+    for item in missing:
+        index, other = item["story_index"], item.get("other_story_index")
+        entry = {"story_index": index, "story": content_text(extraction.stories[index].model_dump())}
+        if other is not None:
+            entry.update(other_story_index=other, other_story=content_text(extraction.stories[other].model_dump()))
+        else:
+            entry.update(existing_story_id=item["existing_story_id"], existing_story=board_text.get(item["existing_story_id"]))
+        items.append(entry)
+    return "Compare these story pairs:\n" + json.dumps(items, ensure_ascii=False)
+
+
+def merge_scope_comparisons(critique, comparisons):
+    """Record follow-up decisions on the story they are about. apply_scope_findings validates them."""
+    reviews = {review.index: review for review in critique.reviews}
+    for item in comparisons.comparisons:
+        review = reviews.get(item.story_index)
+        # exactly one target, or it can't be told what was compared
+        if review is None or (item.other_story_index is None) == (item.existing_story_id is None):
+            continue
+        target = (item.other_story_index, item.existing_story_id)
+        if any((r.other_story_index, r.existing_story_id) == target for r in review.relationships):
+            continue
+        review.relationships.append(StoryRelationship(
+            other_story_index=item.other_story_index, existing_story_id=item.existing_story_id,
+            relationship=item.relationship, reason=item.reason,
+        ))
 
 
 _INVEST_CRITERIA = {"Independent", "Negotiable", "Valuable", "Estimable", "Small", "Testable"}

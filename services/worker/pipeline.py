@@ -24,11 +24,15 @@ from sqlmodel import Session
 from services.db import get_engine
 from services.models import Meeting, PipelineOutput
 
-from .objects import ClockTranscript, CritiqueResult, ExtractionResult, Transcript
+from .objects import ClockTranscript, CritiqueResult, ExtractionResult, ScopeComparisons, Transcript
 from .board_context import build_board_context, build_review_context
-from .scope_review import apply_scope_findings, flag_unassessed_scope, missing_scope_checks
+from .scope_review import (
+    apply_scope_findings, flag_unassessed_scope, merge_scope_comparisons, missing_scope_checks,
+    scope_followup_input,
+)
 from .prompts.critique import CRITIQUE_SYSTEM_PROMPT
 from .prompts.extract import CreativityLevel, get_extract_prompt
+from .prompts.scope import SCOPE_SYSTEM_PROMPT
 from .prompts.transcribe import get_transcribe_prompt
 from .timeline import anchor_sources, audio_seconds, to_transcript
 
@@ -126,26 +130,27 @@ def _run_pipeline(
         + f"Meeting transcript:\n{transcript_json}\n\n"
         f"Draft stories:\n{json.dumps(stories_with_indexes)}"
     )
-    for attempt in range(2):
-        critique: CritiqueResult = generate_result(CRITIQUE_SYSTEM_PROMPT, critique_input, CritiqueResult)
-        apply_scope_findings(extraction, critique, relationships, context)
-        missing = missing_scope_checks(critique, relationships)
+    critique: CritiqueResult = generate_result(CRITIQUE_SYSTEM_PROMPT, critique_input, CritiqueResult)
+    apply_scope_findings(extraction, critique, relationships, context)
+    missing = missing_scope_checks(critique, relationships)
+    # The model often skips some of the comparisons it was handed. Ask for just those, which is a
+    # much smaller job than a whole new review, rather than failing the meeting or assuming
+    # "independent". They can't be skipped silently: anything still missing is flagged below.
+    for _ in range(2):
         if not missing:
             break
-        if attempt == 1:
-            # Don't fail the whole meeting over an advisory check. Flag what wasn't compared.
-            logger.warning(
-                "Critique still omitted %d scope comparison(s) after a retry; flagging those stories for manual review",
-                len(missing),
-            )
-            flag_unassessed_scope(extraction, critique, missing)
-            break
-        critique_input = (
-            "The previous review omitted scope comparisons. Return a complete review "
-            "for every draft, explicitly assessing these references in relationships "
-            "(independent is valid when the scopes differ):\n"
-            f"{json.dumps(missing)}\n\n" + critique_input
+        comparisons = generate_result(
+            SCOPE_SYSTEM_PROMPT, scope_followup_input(extraction, relationships, missing), ScopeComparisons,
         )
+        merge_scope_comparisons(critique, comparisons)
+        apply_scope_findings(extraction, critique, relationships, context)
+        missing = missing_scope_checks(critique, relationships)
+    if missing:
+        logger.warning(
+            "Scope review still omitted %d comparison(s) after follow-ups; flagging those stories for manual review",
+            len(missing),
+        )
+        flag_unassessed_scope(extraction, critique, missing)
     for review in critique.reviews:
         if 0 <= review.index < len(extraction.stories):
             origin = extraction.stories[review.index].origin

@@ -93,6 +93,19 @@ class StoryRelationship(BaseModel):
     reason: str = Field(min_length=1, description="Explain actual behavior/criteria overlap or why the scopes are distinct")
 
 
+class ScopeComparison(BaseModel):
+    """One scope decision, asked for on its own when the full review left it out."""
+    story_index: int = Field(ge=0)
+    other_story_index: Optional[int] = Field(default=None, ge=0)
+    existing_story_id: Optional[str] = None
+    relationship: Literal["independent", "overlap", "contains", "contained_by", "depends_on"]
+    reason: str = Field(min_length=1, description="Explain actual behavior/criteria overlap or why the scopes are distinct")
+
+
+class ScopeComparisons(BaseModel):
+    comparisons: list[ScopeComparison]
+
+
 class StoryReview(BaseModel):
     index: int
     invest_score: int = Field(ge=0, le=6)

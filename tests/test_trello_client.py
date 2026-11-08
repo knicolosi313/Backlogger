@@ -14,7 +14,8 @@ def http(monkeypatch):
     response.content = b"{}"
     response.json.return_value = {"id": "synthetic-id"}
     request = Mock(return_value=response)
-    monkeypatch.setattr(requests, "request", request)
+    # The client sends through its own Session, so calls are reused connections
+    monkeypatch.setattr(requests.Session, "request", lambda self, *args, **kwargs: request(*args, **kwargs))
     return request, response
 
 
@@ -139,3 +140,35 @@ def test_story_format_includes_criteria_quote_with_its_start_time_and_zero_estim
     assert "Start Time" not in description and "End Time" not in description and "Speaker" not in description
     assert "Estimate: 0 points" in description
     assert "Epic: Accounts" in description
+
+
+def test_one_client_reuses_a_single_connection_for_all_its_calls(monkeypatch):
+    sessions = []
+    response = Mock(content=b"{}")
+    response.json.return_value = {}
+    monkeypatch.setattr(
+        requests.Session, "request", lambda self, *args, **kwargs: sessions.append(self) or response,
+    )
+    client = TrelloClient("synthetic-key", "synthetic-token")
+    client.list_lists("board-1")
+    client.list_labels("board-1")
+    client.create_checklist("card-1", "Acceptance Criteria")
+    assert len(sessions) == 3 and len({id(session) for session in sessions}) == 1
+
+
+def test_requests_for_one_token_wait_once_the_trello_limit_is_reached(http, monkeypatch):
+    from adapters.trello import client as trello_client
+
+    now, slept = [1000.0], []
+    monkeypatch.setattr(trello_client.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(trello_client.time, "sleep", lambda seconds: (slept.append(seconds), now.__setitem__(0, now[0] + seconds)))
+    first, second = TrelloClient("synthetic-key", "token-a"), TrelloClient("synthetic-key", "token-a")
+    for _ in range(trello_client.RATE_LIMIT_REQUESTS):
+        first.list_lists("board-1")
+    assert slept == []
+    # a different client with the same token shares the budget, so the next call must wait out the window
+    second.list_lists("board-1")
+    assert slept == [pytest.approx(trello_client.RATE_LIMIT_WINDOW_SECONDS)]
+    # and a different token has a budget of its own
+    TrelloClient("synthetic-key", "token-b").list_lists("board-1")
+    assert len(slept) == 1

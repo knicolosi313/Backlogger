@@ -11,6 +11,14 @@ from services.worker.timecode import format_clock
 
 
 @pytest.fixture(autouse=True)
+def fresh_trello_rate_limit():
+    """Every test starts with an unused Trello request budget, so none waits on another's calls."""
+    from adapters.trello import client
+
+    client._sent.clear()
+
+
+@pytest.fixture(autouse=True)
 def disable_real_embeddings(monkeypatch):
     """Tests opt into embeddings explicitly and supply a fake embedding client."""
     monkeypatch.setenv("STORY_EMBEDDINGS_ENABLED", "false")

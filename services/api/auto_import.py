@@ -2,6 +2,7 @@
 
 import logging
 import math
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from uuid import UUID
 
@@ -21,6 +22,10 @@ from .schemas import AutoImportOptions, AutoImportStatus, ImportCreate, JiraImpo
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meetings", tags=["Auto-import"])
+
+# Trello stories export side by side. TrelloClient keeps their combined requests under Trello's limit.
+# Jira stays one at a time because they share one account whose token may need refreshing.
+TRELLO_EXPORT_WORKERS = 3
 
 
 def eligible_story(story: Story, threshold: float, *, retry=False) -> bool:
@@ -140,56 +145,65 @@ def run_auto_import(meeting_id: UUID):
             board_id, provider, account_id = board.id, board.provider, run.connection_id
             session.commit()
 
-        for story_id in story_ids:
+        def export_one(story_id) -> str:
+            """Export one story in its own session. Returns "imported", "skipped" or "failed"."""
             try:
                 with Session(get_engine()) as session:
                     story = get_record(session, Story, story_id, lock=True)
                     if story.status == "imported":
-                        imported += 1
-                    elif not eligible_story(story, options.confidence_threshold, retry=True):
-                        skipped += 1
+                        return "imported"
+                    if not eligible_story(story, options.confidence_threshold, retry=True):
+                        return "skipped"
+                    # Load credentials at export time, honoring disconnects and Jira refresh.
+                    if provider == "trello":
+                        account = session.get(TrelloConnection, account_id)
+                        if account_identity(account, provider) != identity:
+                            raise HTTPException(401, "Reconnect the original account")
+                        client = trello_auth.client_for_connection(account)
                     else:
-                        # Load credentials at export time, honoring disconnects and Jira refresh.
-                        if provider == "trello":
-                            account = session.get(TrelloConnection, account_id)
-                            if account_identity(account, provider) != identity:
-                                raise HTTPException(401, "Reconnect the original account")
-                            client = trello_auth.client_for_connection(account)
-                        else:
-                            account = session.exec(select(JiraConnection).where(JiraConnection.id == account_id).with_for_update()).first()
-                            if account_identity(account, provider) != identity:
-                                raise HTTPException(401, "Reconnect the original account")
-                            client = jira_auth.client_for_connection(account, session)
-                        # Jira refresh commits. Reacquire the story lock and recheck
-                        # so human edits/rejections during refresh cannot be overwritten.
-                        session.refresh(story, with_for_update=True)
-                        if story.status == "imported":
-                            imported += 1
-                            continue
-                        if not eligible_story(story, options.confidence_threshold, retry=True):
-                            skipped += 1
-                            continue
-                        if story.status == "draft":
-                            story.status = "accepted"
-                            session.add(AnalyticsEvent(
-                                board_id=board_id, story_id=story.id, event_type="story_auto_accepted",
-                                confidence=story.confidence, invest_score=story.invest_score,
-                                properties={"meeting_id": str(meeting_id)},
-                            ))
-                            session.commit()
-                        evidence = f"{str(options.evidence_base_url).rstrip('/')}/api/meetings/{meeting_id}/audio#t={max(0, story.draft['source']['start_s'])}"
-                        if provider == "trello":
-                            export_story(session, client, board_id, ImportCreate(story_id=story_id, list_id=options.list_id, evidence_url=evidence))
-                        else:
-                            export_jira_story(session, client, board_id, JiraImportCreate(
-                                story_id=story_id, issue_type_id=options.issue_type_id,
-                                additional_fields=options.additional_fields, evidence_url=evidence,
-                            ))
-                        imported += 1
+                        account = session.exec(select(JiraConnection).where(JiraConnection.id == account_id).with_for_update()).first()
+                        if account_identity(account, provider) != identity:
+                            raise HTTPException(401, "Reconnect the original account")
+                        client = jira_auth.client_for_connection(account, session)
+                    # Jira refresh commits. Reacquire the story lock and recheck
+                    # so human edits/rejections during refresh cannot be overwritten.
+                    session.refresh(story, with_for_update=True)
+                    if story.status == "imported":
+                        return "imported"
+                    if not eligible_story(story, options.confidence_threshold, retry=True):
+                        return "skipped"
+                    if story.status == "draft":
+                        story.status = "accepted"
+                        session.add(AnalyticsEvent(
+                            board_id=board_id, story_id=story.id, event_type="story_auto_accepted",
+                            confidence=story.confidence, invest_score=story.invest_score,
+                            properties={"meeting_id": str(meeting_id)},
+                        ))
+                        session.commit()
+                    evidence = f"{str(options.evidence_base_url).rstrip('/')}/api/meetings/{meeting_id}/audio#t={max(0, story.draft['source']['start_s'])}"
+                    if provider == "trello":
+                        export_story(session, client, board_id, ImportCreate(story_id=story_id, list_id=options.list_id, evidence_url=evidence))
+                    else:
+                        export_jira_story(session, client, board_id, JiraImportCreate(
+                            story_id=story_id, issue_type_id=options.issue_type_id,
+                            additional_fields=options.additional_fields, evidence_url=evidence,
+                        ))
+                    return "imported"
             except Exception:
-                failed += 1
                 logger.warning("Auto-import could not export story %s", story_id)
-            save_progress(meeting_id, imported=imported, skipped=skipped, failed=failed)
+                return "failed"
+
+        # Results come back in story order, and only this thread updates the counts and progress.
+        workers = TRELLO_EXPORT_WORKERS if provider == "trello" else 1
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for outcome in pool.map(export_one, story_ids):
+                if outcome == "imported":
+                    imported += 1
+                elif outcome == "skipped":
+                    skipped += 1
+                else:
+                    failed += 1
+                save_progress(meeting_id, imported=imported, skipped=skipped, failed=failed)
         save_progress(
             meeting_id, status="failed" if failed else "completed", imported=imported, skipped=skipped, failed=failed,
             error="Some stories could not be imported. Reconnect/check the destination, then retry; saved exports will be reused." if failed else None,
